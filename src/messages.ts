@@ -192,3 +192,33 @@ function toMessage(row: Row, model: ModelRef, key: string): Message[] {
 export function toMessages(rows: readonly Row[], model: ModelRef, key: string = model.providerID): Message[] {
   return rows.flatMap((row) => toMessage(row, model, key));
 }
+
+type Make = (input: Pick<Message, "role" | "content"> & Partial<Pick<Message, "id" | "metadata" | "providerMetadata" | "native">>) => Message;
+type AssetClass = new (input: { source: Media.Asset["source"]; info?: Media.Asset["info"]; providerMetadata?: Media.Asset["providerMetadata"]; headers?: Media.Asset["headers"] }) => Media.Asset;
+
+/**
+ * Builds request messages with the classes of the `@opencode/ai` copy OpenCode itself runs, taken from the
+ * messages it handed over. The plugin ships its own copy, and `Message` checks `media` with `instanceof
+ * Media.Asset`: an attachment OpenCode made fails the plugin's `Message.make`, and one the plugin made could
+ * fail OpenCode's. Each attachment is moved to the class of the copy that builds its message.
+ */
+export function hostMessages(host: readonly Message[]): (input: Parameters<Make>[0]) => Message {
+  const own = { make: Message.make as Make, Asset: Media.Asset as AssetClass };
+  const found = host.find((message) => typeof (message?.constructor as { make?: unknown } | undefined)?.make === "function");
+  const make = found ? (found.constructor as unknown as { make: Make }).make : own.make;
+  const media = host.flatMap((message) => message.content).find((part) => part.type === "media");
+  const hostAsset = media && media.type === "media" ? media.media.constructor as AssetClass : undefined;
+  const adopt = (input: Parameters<Make>[0], Asset: AssetClass): Parameters<Make>[0] => ({
+    ...input,
+    content: Message.content(input.content).map((part) => part.type !== "media" || part.media instanceof Asset ? part : {
+      ...part,
+      media: new Asset({ source: part.media.source, info: part.media.info, providerMetadata: part.media.providerMetadata, headers: part.media.headers }),
+    }),
+  });
+  return (input) => {
+    if (make === own.make) return own.make(adopt(input, own.Asset));
+    if (hostAsset) return make(adopt(input, hostAsset));
+    // OpenCode sent no attachment to learn its asset class from; one made here can only pass the plugin's own check.
+    try { return make(input); } catch { return own.make(adopt(input, own.Asset)); }
+  };
+}

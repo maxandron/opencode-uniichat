@@ -15,7 +15,7 @@ import * as config from "./options.ts";
 import * as env from "./env.ts";
 import * as history from "./history.ts";
 import * as turn from "./turn.ts";
-import { toMessages } from "./messages.ts";
+import { hostMessages, toMessages } from "./messages.ts";
 import { chatDir } from "./store.ts";
 import { btwMemory, lookupCalls, lookupResults, systemText, stateText, ZOOM_DESCRIPTION, DATE_DESCRIPTION } from "./prompts.ts";
 import { UniiChatRpc, statusValue } from "./rpc.ts";
@@ -326,7 +326,7 @@ export const integrate = (ctx: Plugin.Context, options: IntegrationOptions = {})
     event.messages = (yield* Effect.try({
       try: () => history.buildRequest({ messages, turnIds: current.ids, view: memo.frozen!, reports, child, state: perTurnState }),
       catch: error,
-    })).map((message) => Message.make(message));
+    })).map(hostMessages(event.messages));
   })).pipe(Effect.orDie));
 
   // /btw (session.generate) runs one model call with no tool loop. Give it Unii's prompt, the view
@@ -373,7 +373,7 @@ export const integrate = (ctx: Plugin.Context, options: IntegrationOptions = {})
     const reports = new Map(history.items(current.rows, { name: (childID) => nameFor(chat, current.rows, childID) })
       .filter((item) => item.kind === "work").map((item) => [item.src, item.text]));
     const raw = rebuilt ? restoreTurn(rows, event.messages, event.model) : event.messages;
-    const build = (extra?: string) => history.btwRequest({ messages: raw, turnIds: current.ids, view, reports, extra }).map((message) => Message.make(message));
+    const build = (extra?: string) => history.btwRequest({ messages: raw, turnIds: current.ids, view, reports, extra }).map(hostMessages(event.messages));
     const opened = settings.btw.lookupSteps > 0
       ? yield* lookup(chat, { sessionID, model: event.model, system, messages: build(settings.prompts.btwLookup) }).pipe(
         Effect.catchCause((cause) => Effect.logWarning("UniiChat /btw memory lookup failed; answering from the view", cause).pipe(Effect.as([]))),
