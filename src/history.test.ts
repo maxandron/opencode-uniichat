@@ -1,5 +1,5 @@
 import { describe, expect, test } from "bun:test";
-import { Message } from "@opencode/ai";
+import { Message } from "@opencode/ai/effect";
 import { blocks } from "./view.ts";
 import { btwRequest, buildRequest, cutTurn, isStub, stubCut, STUB_SUMMARY, EMPTY_CATALOG, extractCatalog, extractSkills, items, segments, selectLogged, subagentReport, turnKey, type RequestMessage, type Row } from "./history.ts";
 

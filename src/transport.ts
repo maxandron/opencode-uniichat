@@ -1,5 +1,5 @@
 import type { Plugin } from "@opencode/plugin/effect";
-import { Message, type SystemPart } from "@opencode/ai";
+import { Message, type SystemPart } from "@opencode/ai/effect";
 import { Session } from "@opencode/schema/session";
 import { Deferred, Effect } from "effect";
 

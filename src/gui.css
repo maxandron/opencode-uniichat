@@ -1,0 +1,30 @@
+.unii-memory { display:flex; flex-direction:column; height:100%; min-height:0; padding:20px; gap:18px; color:var(--text-base); font-size:13px; }
+.unii-memory h2 { font-size:16px; font-weight:600; margin:0 0 4px; }
+.unii-toolbar,.unii-nav,.unii-indicator { display:flex; align-items:center; gap:10px; }
+.unii-toolbar { justify-content:space-between; }
+.unii-muted { color:var(--text-weak); font-size:12px; }
+.unii-stats { display:grid; grid-template-columns:repeat(3,minmax(0,1fr)); gap:12px; padding:16px 0; border-block:1px solid var(--border-weak-base); }
+.unii-stats>div { display:flex; flex-direction:column; gap:8px; }
+.unii-stats strong { display:flex; align-items:center; gap:6px; font-weight:500; font-variant-numeric:tabular-nums; }
+.unii-dot { display:inline-block; width:6px; height:6px; flex-shrink:0; border-radius:50%; background:var(--text-weak); }
+.unii-dot.unii-on { background:var(--icon-success-base); }
+.unii-nav { font-size:12px; }
+.unii-nav>span { flex:1; color:var(--text-weak); }
+.unii-content { flex:1; min-height:0; overflow:auto; overscroll-behavior:contain; }
+.unii-record { display:flex; width:100%; gap:12px; text-align:left; padding:14px 8px; border-bottom:1px solid var(--border-weak-base); line-height:1.65; white-space:pre-wrap; overflow-wrap:anywhere; cursor:pointer; border-radius:6px; }
+.unii-record:hover { background:var(--surface-base-hover); }
+.unii-record-id { display:flex; flex-direction:column; min-width:48px; font-size:11px; color:var(--text-weak); font-variant-numeric:tabular-nums; }
+.unii-record-id>span { opacity:.65; }
+.unii-record:focus-visible,.unii-content:focus-visible,.unii-indicator:focus-visible { outline:2px solid var(--border-focused); outline-offset:-2px; }
+.unii-record:disabled { cursor:wait; opacity:.65; }
+.unii-message,.unii-plain { font:inherit; white-space:pre-wrap; overflow-wrap:anywhere; line-height:1.8; }
+.unii-empty { padding:40px 16px; text-align:center; color:var(--text-weak); line-height:1.7; }
+.unii-empty h3 { color:var(--text-base); font-weight:500; margin-bottom:8px; }
+.unii-error { color:var(--text-critical-base); font-size:12px; line-height:1.6; overflow-wrap:anywhere; }
+.unii-indicator { font-size:12px; padding:4px 8px; border-radius:6px; color:var(--text-base); cursor:pointer; }
+.unii-indicator:hover { background:var(--surface-base-hover); }
+.unii-memory footer { padding-top:8px; }
+.unii-details { font-size:12px; color:var(--text-weak); }
+.unii-details summary { cursor:pointer; padding:4px 0; }
+.unii-details dl { display:grid; grid-template-columns:auto 1fr; gap:8px 16px; margin-top:12px; }
+.unii-details dd { text-align:right; color:var(--text-base); font-variant-numeric:tabular-nums; }

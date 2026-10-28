@@ -1,6 +1,6 @@
 import type { Schema } from "effect";
 import type { SessionMessage } from "@opencode/schema/session-message";
-import type { ContentPart, Message, SystemPart } from "@opencode/ai";
+import type { ContentPart, Message, SystemPart } from "@opencode/ai/effect";
 import { failureNote } from "./prompts.ts";
 import { echoText, toolResultSrc, toolText, type Kind } from "./record.ts";
 

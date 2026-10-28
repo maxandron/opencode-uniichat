@@ -22,7 +22,7 @@ Memory is stored under `<OpenCode data dir>/uniichat/<sessionID>/`, normally `~/
 
 ## Install
 
-You need OpenCode v2.1 or later. v0.2.0 and earlier need v2.0.
+The current source needs OpenCode v2.2 or later. Tagged v0.2.1–v0.2.3 releases need v2.1; v0.2.0 and earlier need v2.0.
 
 ```sh
 opencode plugin add github:maxandron/opencode-uniichat
@@ -47,6 +47,16 @@ Or add it by hand. The server part goes in `opencode.json(c)` and the terminal U
 - The sidebar shows whether UniiChat is on, and `· compaction error (/unii)` when a compaction failed. The popup shows the error.
 
 The system prompt (with AGENTS.md, the skills list and the Code Mode catalog) is frozen at `/unii on`. To pick up edits, run `/unii off` and then `/unii on`.
+
+### Desktop (experimental)
+
+The same package includes an OpenCode Desktop frontend. List it in your global `opencode.json(c)`; Desktop does not read `cli.json`. The server and terminal frontend stay available.
+
+Open **UniiChat memory** from the command palette, the session panel's **+** menu, the session header indicator, or `/unii`. The panel shows session status, context size, and the live memory view. Enable or turn off memory with its button, select a record to zoom in, and use **Back** or **Esc** to zoom out. Subagent reports offer a link to their full transcript.
+
+The panel follows the displayed session, including sessions on remote servers where UniiChat is installed. Requests are cancelled when you switch sessions or close the panel. Desktop's plugin API is experimental and may change between OpenCode releases.
+
+For local development, configure the **package root**, not its `src` directory, so Desktop can discover `./gui-experimental` in `package.json`. Run `bun run build:gui` (or `bun run build:gui --watch`) after GUI edits. Desktop reloads the rebuilt bundle without restarting the server. Both `dist/gui-experimental.cjs` and `dist/tui.js` ship prebuilt; installs need no build step.
 
 ## Options
 

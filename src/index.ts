@@ -1,7 +1,7 @@
 import { Plugin } from "@opencode/plugin/effect";
 import { OpenCode } from "@opencode/client";
 import { Service } from "@opencode/client/service";
-import { Message } from "@opencode/ai";
+import { Message } from "@opencode/ai/effect";
 import { Session } from "@opencode/schema/session";
 import { SessionMessage } from "@opencode/schema/session-message";
 import { Tool } from "@opencode/schema/tool";

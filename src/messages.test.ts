@@ -1,5 +1,5 @@
 import { expect, test } from "bun:test";
-import { Media, Message } from "@opencode/ai";
+import { Media, Message } from "@opencode/ai/effect";
 import { hostMessages } from "./messages.ts";
 
 // Stands in for the `@opencode/ai` copy OpenCode runs: its classes differ from the plugin's.

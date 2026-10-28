@@ -1,7 +1,7 @@
 // Session rows -> model messages, for the part of a turn that a UniiChat stub compaction hid from
 // OpenCode's request. A port of OpenCode's `session/runner/to-llm-message.ts` (v2.1.0), which
 // plugins cannot import. Native provider checkpoints are left out: a turn cut by one still fails.
-import { Media, Message, ReasoningEfforts, ToolCallPart, ToolResultPart, type ContentPart, type ProviderMetadata } from "@opencode/ai";
+import { Media, Message, ReasoningEfforts, ToolCallPart, ToolResultPart, type ContentPart, type ProviderMetadata } from "@opencode/ai/effect";
 import { fileURLToPath } from "node:url";
 import type { Row } from "./history.ts";
 

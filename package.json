@@ -13,7 +13,8 @@
     ".": "./src/index.ts",
     "./server": "./src/index.ts",
     "./tui": "./dist/tui.js",
-    "./rpc": "./src/rpc.ts"
+    "./rpc": "./src/rpc.ts",
+    "./gui-experimental": "./dist/gui-experimental.cjs"
   },
   "oc-plugin": ["server", "tui"],
   "files": [
@@ -21,37 +22,45 @@
     "src/*.tsx",
     "!src/*.test.ts",
     "dist/tui.js",
+    "dist/gui-experimental.cjs",
     "LICENSE",
     "README.md"
   ],
   "scripts": {
     "build:tui": "bun scripts/build-tui.ts",
+    "build:gui": "vite build",
     "check": "tsc --noEmit -p tsconfig.json && bun scripts/build-tui.ts --check",
     "test": "bun test src"
   },
   "dependencies": {
-    "@opencode/ai": "^2.1.0",
-    "@opencode/client": "^2.1.0",
-    "@opencode/schema": "^2.1.0",
-    "@opencode/util": "^2.1.0",
+    "@opencode/ai": "^2.2.0",
+    "@opencode/client": "^2.2.0",
+    "@opencode/schema": "^2.2.0",
+    "@opencode/util": "^2.2.0",
     "zod": "^4.0.0"
   },
   "peerDependencies": {
-    "@opencode/plugin": "^2.1.0",
+    "@opencode/plugin": "^2.2.0",
     "effect": "^4.0.1"
   },
   "peerDependenciesMeta": {
-    "@opencode/plugin": { "optional": true },
-    "effect": { "optional": true }
+    "@opencode/plugin": {
+      "optional": true
+    },
+    "effect": {
+      "optional": true
+    }
   },
   "devDependencies": {
-    "@opencode/plugin": "2.1.0",
+    "@opencode/plugin": "2.2.0",
     "@opentui/core": "0.6.6",
     "@opentui/solid": "0.6.6",
     "@types/bun": "^1.4.0",
     "@types/node": "^24.12.2",
     "effect": "4.0.1",
     "solid-js": "1.9.12",
-    "typescript": "^5.8.2"
+    "typescript": "^5.8.2",
+    "vite": "^7",
+    "vite-plugin-solid": "^2.11"
   }
 }
