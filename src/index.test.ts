@@ -18,6 +18,11 @@ import { UniiChatRpc } from "./rpc.ts";
 const user = (id: string, text = "task"): Row => ({ type: "user", id, text, time: { created: 1000 } });
 const idle = (id: string): Row => ({ type: "idle", id, outcome: "succeeded", time: { created: 1000 } });
 const msg = (role: "user" | "assistant", text: string, id: string) => Message.make({ role, id, content: [{ type: "text", text }] });
+
+test("invalid configuration stops plugin loading before installing hooks", async () => {
+  const ctx = { options: { "compaction.model": "openai/example" } } as unknown as Plugin.Context;
+  await expect(Effect.runPromise(Effect.scoped(integrate(ctx)))).rejects.toThrow('unknown option "compaction.model"');
+});
 type Callback = (event: SessionContext) => Effect.Effect<void>;
 let serial = 0;
 

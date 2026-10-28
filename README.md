@@ -62,8 +62,50 @@ For local development, configure the **package root**, not its `src` directory, 
 
 All options are optional ;)
 
-They go in the plugin's `options` object. The defaults are the recipe's values.
+Default configuration (`opencode.jsonc`):
 
+```jsonc
+{
+  "plugins": [
+    {
+      "package": "github:maxandron/opencode-uniichat#main",
+      "options": {
+        "defaultOn": false,
+        "compaction": {
+          // model: automatically selects the newest available Anthropic Claude Haiku.
+          "variant": "high",
+          "maxTokens": 32000,
+          "providerOptions": {},
+          "timeoutMs": 240000,
+          "tries": 5,
+          "concurrency": 8
+        },
+        "view": {
+          "chat": {
+            "high": 128000,
+            "low": 64000
+          },
+          "compaction": {
+            "high": 32000,
+            "low": 16000
+          }
+        },
+        "btw": {
+          "lookupSteps": 8,
+          "maxTokens": 4000
+        },
+        "prompts": {
+          // system, subagent, btwLookup: built-in prompts from src/prompts.ts.
+        },
+        "tui": {
+          "pollMs": 2000,
+          "sidebar": true
+        }
+      }
+    }
+  ]
+}
+```
 
 | Option | Default | What it does |
 | --- | --- | --- |

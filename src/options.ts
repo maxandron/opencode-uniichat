@@ -9,12 +9,12 @@ import { CHAT_BUDGET, COMPACTION_BUDGET } from "./view.ts";
 // Every field is optional; README.md documents them.
 
 const positive = z.number().int().positive();
-const budget = z.object({ high: positive, low: positive }).refine((value) => value.low < value.high, "low must be below high");
+const budget = z.strictObject({ high: positive, low: positive }).refine((value) => value.low < value.high, "low must be below high");
 
-export const Schema = z.object({
+export const Schema = z.strictObject({
   /** Switch new sessions on without `/unii on`. Sessions switched off stay off. */
   defaultOn: z.boolean().default(false),
-  compaction: z.object({
+  compaction: z.strictObject({
     /** "providerID/modelID". Default: the newest Anthropic Claude Haiku that OpenCode lists. */
     model: z.string().regex(/^[^/]+\/.+$/, "use providerID/modelID").optional(),
     /** A model variant as OpenCode names them. */
@@ -30,19 +30,19 @@ export const Schema = z.object({
     /** Compaction calls in flight at once. */
     concurrency: positive.default(8),
   }).prefault({}),
-  view: z.object({
+  view: z.strictObject({
     /** Chat view byte budget: merge down to `low` when it passes `high` (recipe: 128000/64000). */
     chat: budget.default({ high: 128000, low: 64000 }),
     /** Compaction view byte budget (recipe: 32000/16000). */
     compaction: budget.default({ high: 32000, low: 16000 }),
   }).prefault({}),
-  btw: z.object({
+  btw: z.strictObject({
     /** Memory lookups (zoom/date) before a /btw answer; 0 answers from the view only. */
     lookupSteps: z.number().int().nonnegative().default(8),
     /** Output token limit for one lookup call. */
     maxTokens: positive.default(4000),
   }).prefault({}),
-  prompts: z.object({
+  prompts: z.strictObject({
     /** Replaces the recipe's system prompt (agent name "Unii"). */
     system: z.string().default(SYSTEM_PROMPT),
     /** Appended to a subagent's own system prompt. */
@@ -50,7 +50,7 @@ export const Schema = z.object({
     /** Added to a /btw question during memory lookups. */
     btwLookup: z.string().default(BTW_LOOKUP_NOTE),
   }).prefault({}),
-  tui: z.object({
+  tui: z.strictObject({
     /** How often the popup and sidebar refresh, in ms. */
     pollMs: positive.default(2000),
     /** Show the on/off line in the session sidebar. */
@@ -61,9 +61,17 @@ export const Schema = z.object({
 export type Options = z.infer<typeof Schema>;
 
 export function parse(input: unknown): Options {
-  const result = Schema.safeParse(input ?? {});
+  const result = Schema.safeParse(input === undefined ? {} : input);
   if (result.success) return result.data;
-  throw new Error(`UniiChat options are invalid: ${result.error.issues.map((issue) => `${issue.path.join(".") || "options"}: ${issue.message}`).join("; ")}`);
+  const issues = result.error.issues.flatMap((issue) => {
+    if (issue.code !== "unrecognized_keys") return [`${["options", ...issue.path].join(".")}: ${issue.message}`];
+    return issue.keys.map((key) => {
+      const location = ["options", ...issue.path].join(".");
+      const hint = key.includes(".") ? " Use nested objects, not dotted property names (e.g. compaction: { model: \"providerID/modelID\" })." : " Check the option name in the README.";
+      return `${location}: unknown option ${JSON.stringify(key)}.${hint}`;
+    });
+  });
+  throw new Error(`UniiChat options are invalid; plugin loading stopped: ${issues.join("; ")}`);
 }
 
 /** The model ref from "providerID/modelID". */
