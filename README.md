@@ -70,35 +70,59 @@ Default configuration (`opencode.jsonc`):
     {
       "package": "github:maxandron/opencode-uniichat#main",
       "options": {
+        // Enable memory by default for sessions without an explicit on/off choice.
         "defaultOn": false,
         "compaction": {
-          // model: automatically selects the newest available Anthropic Claude Haiku.
+          // Compaction model (providerID/modelID). Omit to select the newest Claude Haiku.
+          // "model": "anthropic/claude-haiku-...",
+          // Model variant, using OpenCode's variant names.
           "variant": "high",
+          // Maximum output tokens per compaction call.
           "maxTokens": 32000,
+          // Provider-specific options sent with each compaction call.
           "providerOptions": {},
+          // Fail and retry calls that exceed this duration, in milliseconds.
           "timeoutMs": 240000,
+          // Maximum attempts per node in the "Too long" retry loop.
           "tries": 5,
+          // Maximum simultaneous compaction calls.
           "concurrency": 8
         },
         "view": {
+          // Main chat memory budget, in bytes.
           "chat": {
+            // Start merging when the view exceeds this size.
             "high": 128000,
+            // Merge down to this size.
             "low": 64000
           },
+          // Memory budget used by the compactor, in bytes.
           "compaction": {
+            // Start merging when the view exceeds this size.
             "high": 32000,
+            // Merge down to this size.
             "low": 16000
           }
         },
         "btw": {
+          // Maximum zoom/date lookup steps before answering; 0 uses only the view.
           "lookupSteps": 8,
+          // Maximum output tokens per lookup call.
           "maxTokens": 4000
         },
         "prompts": {
-          // system, subagent, btwLookup: built-in prompts from src/prompts.ts.
+          // Optional string overrides; omit to use built-ins from src/prompts.ts.
+          // System prompt; AGENTS.md, skills and the Code Mode catalog are added.
+          // "system": "...",
+          // Note appended to each subagent's own system prompt.
+          // "subagent": "...",
+          // Instructions added to /btw questions during memory lookups.
+          // "btwLookup": "..."
         },
         "tui": {
+          // Popup/sidebar refresh interval in milliseconds. Set in cli.json.
           "pollMs": 2000,
+          // Show the sidebar status line. Set in cli.json.
           "sidebar": true
         }
       }
@@ -106,27 +130,6 @@ Default configuration (`opencode.jsonc`):
   ]
 }
 ```
-
-| Option | Default | What it does |
-| --- | --- | --- |
-| `defaultOn` | `false` | Sessions never switched on or off start with UniiChat on. |
-| `compaction.model` | newest `anthropic/claude-haiku-*` | Compaction model, as `"providerID/modelID"`. |
-| `compaction.variant` | `"high"` | Model variant, as OpenCode names them. |
-| `compaction.maxTokens` | `32000` | Output limit for one compaction call. |
-| `compaction.providerOptions` | `{}` | Extra provider options sent with each compaction call. |
-| `compaction.timeoutMs` | `240000` | A call with no answer by then fails, and is retried. |
-| `compaction.tries` | `5` | Tries per node in the "Too long" loop. |
-| `compaction.concurrency` | `8` | Compaction calls in flight at once. |
-| `view.chat` | `{ "high": 128000, "low": 64000 }` | Chat view byte budget: when it passes `high`, it is merged down to `low`. |
-| `view.compaction` | `{ "high": 32000, "low": 16000 }` | Compaction view byte budget. |
-| `btw.lookupSteps` | `8` | Memory lookups (zoom/date) allowed before a `/btw` answer. `0` answers from the view only. |
-| `btw.maxTokens` | `4000` | Output limit for one lookup call. |
-| `prompts.system` | the recipe's prompt, agent name "Unii" | The system prompt. Your AGENTS.md, the skills list and the Code Mode catalog are added to it. |
-| `prompts.subagent` | built in | Note appended to a subagent's own system prompt. |
-| `prompts.btwLookup` | built in | Instructions added to a `/btw` question during lookups. |
-| `tui.pollMs` | `2000` | Refresh interval of the popup and sidebar. Set it in `cli.json`. |
-| `tui.sidebar` | `true` | Show the sidebar line. Set it in `cli.json`. |
-
 
 Prompts are plain strings. A prompt change reaches a session at its next `/unii on`.
 
