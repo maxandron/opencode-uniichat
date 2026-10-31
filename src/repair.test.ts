@@ -2,7 +2,7 @@ import { expect, test } from "bun:test";
 import { mkdtempSync, readdirSync, readFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-import { Effect } from "effect";
+import { Deferred, Effect, Fiber } from "effect";
 import { Chat, type Item } from "./chat.ts";
 import { DAMAGE_SINCE, damaged, isGreeting, type Node } from "./repair.ts";
 import { Store } from "./store.ts";
@@ -66,4 +66,34 @@ test("repair drops damaged summaries to an archive and rebuilds them live from t
   }));
   expect(reopened).not.toContain(GREETING);
   expect(reopened).toContain("user: rebuilt");
+});
+
+test("repair waits for summaries in flight instead of refusing", async () => {
+  const dir = mkdtempSync(join(tmpdir(), "uniichat-repair-"));
+  const gate = await Effect.runPromise(Deferred.make<void>());
+  let reply: () => Effect.Effect<string> = () => Effect.succeed(GREETING);
+  const chat = await Effect.runPromise(Chat.open(dir, {
+    compact: () => reply().pipe(Effect.map((text) => ({ text, ms: 1 }))),
+  }));
+  const item = (i: number): Item => ({ kind: "user", text: `message ${i} `.repeat(80), date: 1793433900000, src: `msg_${i}` });
+  await Effect.runPromise(Effect.gen(function* () {
+    yield* chat.setSystem("system");
+    yield* chat.setTools([]);
+    yield* chat.log([item(0)]);
+    yield* chat.awaitSummarized();
+    expect(yield* chat.damaged()).toBe(1);
+
+    reply = () => Deferred.await(gate).pipe(Effect.as("user: in flight"));
+    yield* chat.log([item(1)]);
+    for (let i = 0; i < 50; i++) yield* Effect.yieldNow;
+    expect(chat.status().inFlight).toBe(1);
+    const repairing = yield* Effect.forkChild(chat.repair());
+    for (let i = 0; i < 50; i++) yield* Effect.yieldNow;
+    expect(repairing.pollUnsafe()).toBeUndefined();
+    reply = () => Effect.succeed("user: rebuilt");
+    yield* Deferred.succeed(gate, undefined);
+    expect(yield* Fiber.join(repairing)).toMatchObject({ dropped: 2, leaves: 1 }); // the greeting and the merge over it
+    yield* chat.awaitSummarized();
+    expect(yield* chat.damaged()).toBe(0);
+  }));
 });

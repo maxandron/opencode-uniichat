@@ -532,6 +532,7 @@ export default Plugin.define({
                 return;
               }
               if (argument === "repair") {
+                ctx.ui.toast.show({ variant: "info", message: "UniiChat repair: waiting for running summaries to finish…" });
                 try {
                   const result = await rpcClient(ctx).repair({ sessionID: route.sessionID }, { location: ctx.location });
                   bumpState((n) => n + 1);

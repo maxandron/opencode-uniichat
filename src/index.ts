@@ -444,12 +444,15 @@ export const integrate = (ctx: Plugin.Context, options: IntegrationOptions = {})
       const view = (yield* get(yield* target(sessionID))).renderView();
       return [...view.blocks, view.tail].join("").replace(/^<chat>\n/, "").replace(/\n?<\/chat>$/, "").split("\n").filter(Boolean);
     }).pipe(Effect.orDie),
-    repair: ({ sessionID }) => Effect.gen(function* () {
+    repair: ({ sessionID }, { error }) => Effect.gen(function* () {
       const chat = yield* get(yield* target(sessionID));
       const result = yield* chat.repair();
       if (result.dropped) yield* Effect.logInfo(`UniiChat repair of ${sessionID} dropped ${result.dropped} damaged summaries (${result.leaves} leaves) to ${result.archive}`);
       return { dropped: result.dropped, leaves: result.leaves };
-    }).pipe(Effect.orDie),
+    }).pipe(Effect.catch((cause) => Effect.gen(function* () {
+      yield* Effect.logWarning(`UniiChat repair of ${sessionID} failed`, cause);
+      return yield* Effect.fail(error("failed", cause instanceof Error || (typeof cause === "object" && cause !== null && "message" in cause) ? String((cause as { message: unknown }).message) : String(cause)));
+    }))),
     archive: (input) => Effect.gen(function* () {
       const chat = yield* get(yield* target(input.sessionID));
       return (yield* ("name" in input ? chat.zoom(input.name) : chat.zoom(input.id, input.n))).text;

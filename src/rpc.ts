@@ -59,7 +59,12 @@ export const UniiChatRpc = Rpc.define({
       output: status,
     },
     view: { input: session, output: z.array(z.string()) },
-    repair: { input: session, output: z.object({ dropped: z.number(), leaves: z.number() }) },
+    repair: {
+      input: session,
+      output: z.object({ dropped: z.number(), leaves: z.number() }),
+      // The chat moved to a newer copy, or the store failed: the message says which.
+      errors: { failed: z.undefined() },
+    },
     archive: {
       input: z.union([
         session.extend({ id: z.number().int().nonnegative(), n: z.number().int().positive() }),

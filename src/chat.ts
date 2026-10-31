@@ -65,6 +65,8 @@ export class Chat {
   private damage: Set<string> | undefined;
   // Set when a newer copy of the plugin takes the chat over (see `get`): nothing more is written.
   private closed = false;
+  /** `/unii repair` is waiting for in-flight builds to land: start no new ones. */
+  private holding = false;
   private readonly lookup: view.Lookup = (l, i) => this.texts.get(key([l, i]));
 
   private constructor(private readonly store: Store, private readonly deps: Deps, loaded: Loaded) {
@@ -227,7 +229,7 @@ export class Chat {
         const work = self.queue.drain((ref) => {
           const rec = ref[0] === 0 ? self.records.get(ref[1])! : undefined;
           return rec ? tree.leafText(rec.kind, rec.text) : tree.mergeText(...tree.children(ref).map((child) => self.lookup(...child)!) as [string, string]);
-        }, 8 - self.queue.inFlight.size);
+        }, self.holding ? 0 : 8 - self.queue.inFlight.size);
         starts.push(...work.start);
         for (const [ref, text] of work.instant) self.unpersisted.set(key(ref), { ref, text });
         for (const [at, [ref, text]] of work.instant.entries()) {
@@ -445,28 +447,51 @@ export class Chat {
   }
 
   // `/unii repair`: drop the damaged summaries (archived in the store) and rebuild them from the
-  // log, live. Needs the queue idle, so no build in flight reads a node being dropped.
+  // log, live. No build may be in flight while nodes are dropped, so it first holds new builds and
+  // waits for the running ones to land.
   repair() {
     const self = this;
-    return this.mutex.withPermits(1)(Effect.gen(function* () {
-      yield* self.live();
-      if (self.queue.inFlight.size || self.unpersisted.size) {
-        return yield* Effect.fail(new ChatError({ message: `UniiChat is compacting (${self.queue.inFlight.size} calls running); run /unii repair again when it is idle.` }));
+    const idle = () => !self.queue.inFlight.size && !self.unpersisted.size;
+    return Effect.gen(function* () {
+      yield* self.mutex.withPermits(1)(Effect.gen(function* () {
+        yield* self.live();
+        self.holding = true;
+      }));
+      while (true) {
+        const next = self.changed;
+        const ready = yield* self.mutex.withPermits(1)(Effect.gen(function* () {
+          yield* self.live();
+          if (!idle()) yield* self.pump();
+          return idle();
+        }));
+        if (ready) break;
+        yield* Deferred.await(next);
       }
-      const bad = yield* self.scan();
-      self.damage = new Set();
-      if (bad.size === 0) return { dropped: 0, leaves: 0, archive: undefined as string | undefined };
-      const archive = yield* self.store.dropNodes(bad);
-      for (const id of bad) self.texts.delete(id);
-      const built = [...self.texts.keys()].map((id) => id.split(":").map(Number) as unknown as tree.Ref);
-      self.queue = WorkQueue.restore(self.T, built);
-      self.pending = self.T - built.filter((ref) => ref[0] === 0).length;
-      self.lastError = undefined;
-      self.refreshSizes();
-      yield* self.notify();
-      yield* self.pump();
-      return { dropped: bad.size, leaves: [...bad].filter((id) => id.startsWith("0:")).length, archive };
-    }).pipe(Effect.uninterruptible));
+      return yield* self.mutex.withPermits(1)(Effect.gen(function* () {
+        yield* self.live();
+        const bad = yield* self.scan();
+        self.damage = new Set();
+        self.holding = false;
+        if (bad.size === 0) {
+          yield* self.pump();
+          return { dropped: 0, leaves: 0, archive: undefined as string | undefined };
+        }
+        const archive = yield* self.store.dropNodes(bad);
+        for (const id of bad) self.texts.delete(id);
+        const built = [...self.texts.keys()].map((id) => id.split(":").map(Number) as unknown as tree.Ref);
+        self.queue = WorkQueue.restore(self.T, built);
+        self.pending = self.T - built.filter((ref) => ref[0] === 0).length;
+        self.lastError = undefined;
+        self.refreshSizes();
+        yield* self.notify();
+        yield* self.pump();
+        return { dropped: bad.size, leaves: [...bad].filter((id) => id.startsWith("0:")).length, archive };
+      }).pipe(Effect.uninterruptible));
+    }).pipe(Effect.ensuring(Effect.suspend(() => {
+      if (!self.holding) return Effect.void;
+      self.holding = false;
+      return self.mutex.withPermits(1)(self.pump()).pipe(Effect.ignore);
+    })));
   }
 
   awaitSummarized() {

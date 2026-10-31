@@ -56,7 +56,11 @@ var UniiChatRpc = Rpc.define({
       output: status
     },
     view: { input: session, output: z.array(z.string()) },
-    repair: { input: session, output: z.object({ dropped: z.number(), leaves: z.number() }) },
+    repair: {
+      input: session,
+      output: z.object({ dropped: z.number(), leaves: z.number() }),
+      errors: { failed: z.undefined() }
+    },
     archive: {
       input: z.union([
         session.extend({ id: z.number().int().nonnegative(), n: z.number().int().positive() }),
@@ -909,6 +913,10 @@ var tui_default = Plugin.define({
                 return;
               }
               if (argument === "repair") {
+                ctx.ui.toast.show({
+                  variant: "info",
+                  message: "UniiChat repair: waiting for running summaries to finish\u2026"
+                });
                 try {
                   const result = await rpcClient(ctx).repair({
                     sessionID: route.sessionID
