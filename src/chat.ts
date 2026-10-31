@@ -15,6 +15,8 @@ export interface Item {
   files?: readonly { name: string; mime: string; data?: Uint8Array }[];
 }
 export interface Deps {
+  /** The integration whose compactor the chat keeps, for the log. */
+  owner?: string;
   compact: (input: compactor.Input) => Effect.Effect<compactor.Output, unknown>;
 }
 export class ChatError extends Data.TaggedError("ChatError")<{ message: string }> {}
@@ -532,6 +534,7 @@ export function get(sessionID: string, deps: Deps): Effect.Effect<Chat, StoreErr
     if (!loaded) {
       loaded = Deferred.makeUnsafe<Chat, StoreError>();
       registry.set(sessionID, loaded);
+      if (deps.owner) yield* Effect.logInfo(`UniiChat chat ${sessionID} opened by instance ${deps.owner}`);
       yield* Effect.forkDetach(Deferred.complete(loaded, Chat.open(chatDir(sessionID), deps)));
     }
     return yield* restore(Deferred.await(loaded));

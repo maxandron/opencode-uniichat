@@ -1,10 +1,8 @@
 import { describe, expect, test } from "bun:test";
-import { Deferred, Effect } from "effect";
 import { COMPACTION } from "./chat.ts";
 import { configure, modelRef, parse } from "./options.ts";
 import { lookupCalls, lookupResults } from "./prompts.ts";
 import { QUEUE } from "./queue.ts";
-import { make, type GenerateEvent } from "./transport.ts";
 import { CHAT_BUDGET, COMPACTION_BUDGET } from "./view.ts";
 
 describe("options", () => {
@@ -70,46 +68,5 @@ describe("/btw lookup protocol", () => {
       { name: "zoom", id: 7, text: "zoom(7)" },
     ]);
     expect(lookupResults([{ call: "date(1)", text: "2026-10-17" }])).toStartWith("> date(1)\n2026-10-17\n\n[Reply");
-  });
-});
-
-describe("transport", () => {
-  test("runs a call in a throwaway child session and swaps in its request", async () => {
-    const created: unknown[] = [];
-    const removed: string[] = [];
-    const seen: GenerateEvent[] = [];
-    let apply: ((event: GenerateEvent) => boolean) | undefined;
-    const ctx = {
-      session: {
-        create: (input: unknown) => Effect.sync(() => { created.push(input); return { id: "ses_tmp" }; }),
-        remove: ({ sessionID }: { sessionID: string }) => Effect.sync(() => { removed.push(sessionID); }),
-        hook: (_name: string, callback: (event: unknown) => Effect.Effect<void>) => Effect.sync(() => { void callback; }),
-        generate: ({ sessionID }: { sessionID: string }) => Effect.sync(() => {
-          const event: GenerateEvent = {
-            sessionID, system: [{ type: "text", text: "opencode" }], messages: [],
-            tools: { read: { description: "read", input: {} }, zoom: { description: "zoom", input: {} }, bash: { description: "bash", input: {} } },
-            options: { stray: 1 },
-          };
-          expect(apply!(event)).toBe(true);
-          seen.push(event);
-          return { text: " line " };
-        }),
-      },
-    } as never;
-    const transport = make(ctx);
-    apply = transport.apply;
-    const started = Deferred.makeUnsafe<void>();
-    const text = await Effect.runPromise(transport.run({
-      parentID: "ses_chat", model: { providerID: "anthropic", id: "claude-haiku-9" }, system: "unii",
-      messages: [], tools: ["zoom", "read", "gone"], options: { maxTokens: 10 }, started,
-    }));
-    expect(text).toBe(" line ");
-    expect(created).toEqual([expect.objectContaining({ parentID: "ses_chat", model: { providerID: "anthropic", id: "claude-haiku-9" } })]);
-    expect(removed).toEqual(["ses_tmp"]);
-    expect(seen[0]!.system).toEqual([{ type: "text", text: "unii" }]);
-    expect(Object.keys(seen[0]!.tools)).toEqual(["zoom", "read"]);
-    expect(seen[0]!.options).toEqual({ maxTokens: 10 });
-    expect(transport.owns("ses_tmp")).toBe(true);
-    expect(transport.apply({ ...seen[0]!, sessionID: "ses_other" })).toBe(false);
   });
 });

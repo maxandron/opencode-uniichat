@@ -1,7 +1,7 @@
 import type { Plugin } from "@opencode/plugin/effect";
 import { Message, type SystemPart } from "@opencode/ai/effect";
 import { Session } from "@opencode/schema/session";
-import { Deferred, Effect } from "effect";
+import { Data, Deferred, Effect } from "effect";
 
 // Model calls of UniiChat's own (compactions and /btw memory lookups) go through OpenCode, with the
 // user's own providers and credentials. OpenCode lets a plugin set a request's system, messages and
@@ -33,10 +33,25 @@ export interface GenerateEvent {
 
 export const METADATA = { uniichat: "call" } as const;
 
-export function make(ctx: Plugin.Context) {
-  const pending = new Map<string, Call>();
-  // Every throwaway session ever made, so late events about one are never taken for a subagent's.
-  const known = new Set<string>();
+export class TransportError extends Data.TaggedError("UniiChatTransportError")<{ message: string }> {}
+
+/** Calls in flight and every throwaway session ever made, shared by all UniiChat instances in the process. */
+export interface Registry {
+  readonly pending: Map<string, { call: Call; applied: boolean }>;
+  /** So late events about a throwaway session are never taken for a subagent's. */
+  readonly known: Set<string>;
+}
+
+// OpenCode can integrate the plugin more than once in a server process (location boots, config
+// reloads, a package update), and a chat keeps the instance that first opened it. The `generate`
+// hook that answers a call may belong to another instance, so every instance must find every call.
+const REGISTRY = Symbol.for("opencode-uniichat.transport.v1");
+export function registry(): Registry {
+  const global = globalThis as { [REGISTRY]?: Registry };
+  return global[REGISTRY] ??= { pending: new Map(), known: new Set() };
+}
+
+export function make(ctx: Plugin.Context, { pending, known }: Registry = registry()) {
 
   const run = (call: Call) => Effect.scoped(Effect.gen(function* () {
     const session = yield* ctx.session.create({
@@ -45,7 +60,8 @@ export function make(ctx: Plugin.Context) {
       model: call.model as never,
       metadata: { ...METADATA },
     });
-    pending.set(session.id, call);
+    const entry = { call, applied: false };
+    pending.set(session.id, entry);
     known.add(session.id);
     yield* Effect.addFinalizer(() => Effect.gen(function* () {
       pending.delete(session.id);
@@ -59,20 +75,27 @@ export function make(ctx: Plugin.Context) {
         event.sessionID === session.id ? Deferred.succeed(started, undefined).pipe(Effect.asVoid) : Effect.void,
       { providerID: call.model.providerID });
     }
-    const result = yield* ctx.session.generate({ sessionID: session.id, prompt: "UniiChat" });
+    // The placeholder names the call, so a request that went out unswapped is traceable in logs.
+    const result = yield* ctx.session.generate({ sessionID: session.id, prompt: `UniiChat call ${session.id}` });
+    // Fail closed: without the swap the model answered the placeholder, and its text is junk.
+    if (!entry.applied) {
+      return yield* Effect.fail(new TransportError({ message: `UniiChat call ${session.id} went out without its request: no UniiChat generate hook applied it` }));
+    }
     return result.text;
   }));
 
   /** Applies a pending call to its `generate` request; false if the session is not one of ours. */
   const apply = (event: GenerateEvent): boolean => {
-    const call = pending.get(event.sessionID);
-    if (!call) return false;
+    const entry = pending.get(event.sessionID);
+    if (!entry) return false;
+    const call = entry.call;
     event.system = [{ type: "text", text: call.system }];
     event.messages = [...call.messages];
     const offered = event.tools;
     event.tools = Object.fromEntries(call.tools.flatMap((name) => offered[name] ? [[name, offered[name]] as const] : []));
     for (const key of Object.keys(event.options)) delete event.options[key];
     Object.assign(event.options, call.options);
+    entry.applied = true;
     return true;
   };
 

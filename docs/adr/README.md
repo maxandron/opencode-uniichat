@@ -70,3 +70,5 @@ A new decision gets the next number; a changed decision gets a new record, and t
 | [0060](0060-zoom-error-lists-roots.md) | A bad zoom lists the tree's roots | Accepted |
 | [0061](0061-subagent-note-explains-the-view.md) | The subagent note explains the view | Accepted |
 | [0062](0062-imports-block-the-first-turn.md) | Imported turns block the first turn | Accepted |
+| [0063](0063-desktop-frontend.md) | A desktop frontend beside the terminal UI | Accepted |
+| [0064](0064-calls-shared-across-instances.md) | Calls in flight are shared across plugin instances, and fail closed | Accepted |

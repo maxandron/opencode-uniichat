@@ -114,6 +114,10 @@ export const integrate = (ctx: Plugin.Context, options: IntegrationOptions = {})
   const settings = config.parse(options.options ?? ctx.options);
   config.configure(settings);
   const transport = options.transport ?? transports.make(ctx);
+  // Names this integration in the log: which one opened a chat, and when it went away.
+  const instance = crypto.randomUUID().slice(0, 8);
+  yield* Effect.logInfo(`UniiChat instance ${instance} integrated at ${ctx.location.directory}`);
+  yield* Effect.addFinalizer(() => Effect.logInfo(`UniiChat instance ${instance} disposed`));
   // The compaction model: the configured one, else the newest Anthropic Claude Haiku OpenCode lists.
   let chosen: compactor.Model | undefined;
   const compactionModel = Effect.gen(function* () {
@@ -124,6 +128,7 @@ export const integrate = (ctx: Plugin.Context, options: IntegrationOptions = {})
     return chosen = { providerID: "anthropic", id: haiku.modelID, ...(settings.compaction.variant ? { variant: settings.compaction.variant } : {}) };
   });
   const depsFor = (sessionID: string): engine.Deps => ({
+    owner: instance,
     compact: (input) => Effect.gen(function* () {
       const model = yield* compactionModel;
       const providerOptions = settings.compaction.providerOptions ?? {};
