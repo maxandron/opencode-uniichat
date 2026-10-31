@@ -52,6 +52,7 @@ function Memory(props: { session: MountedSession }) {
   const [stack, setStack] = createSignal<Level[]>([]);
   const [busy, setBusy] = createSignal(false);
   const [error, setError] = createSignal<string>();
+  const [repaired, setRepaired] = createSignal<string>();
   const status = () => state.value()?.status;
   const enabled = () => status()?.on ?? false;
   const current = (): Level => stack().at(-1) ?? { title: "Live view", lines: state.value()?.lines ?? [] };
@@ -72,6 +73,18 @@ function Memory(props: { session: MountedSession }) {
     } catch (cause) { if (!controller.signal.aborted) setError(message(cause)); }
     finally { if (!controller.signal.aborted) setBusy(false); }
   }
+  async function repair() {
+    if (busy()) return;
+    setBusy(true); setError(undefined); setRepaired(undefined);
+    try {
+      const result = await rpc(session).repair({ sessionID: session.id }, { signal: controller.signal });
+      if (controller.signal.aborted) return;
+      setRepaired(result.dropped === 0 ? "No damaged summaries found."
+        : `Dropped ${result.dropped} damaged summaries; rebuilding them from the log${result.leaves ? ` (${result.leaves} messages; the next prompt waits for them)` : ""}.`);
+      await state.refresh();
+    } catch (cause) { if (!controller.signal.aborted) setError(message(cause)); }
+    finally { if (!controller.signal.aborted) setBusy(false); }
+  }
   async function open(input: { id: number; n: number } | { name: string }) {
     if (busy()) return;
     setBusy(true); setError(undefined);
@@ -89,7 +102,7 @@ function Memory(props: { session: MountedSession }) {
   }
   return <section class="unii-memory" aria-label="UniiChat memory">
     <header class="unii-toolbar">
-      <div><h2>Memory</h2><span class="unii-muted">The context your agent sees</span></div>
+      <div><h2>Memory</h2><span class="unii-muted">The context your agent sees<Show when={status()}>{(s) => <> · v{s().plugin.version}</>}</Show></span></div>
       <ui.Button size="small" busy={busy()} disabled={!status()} onClick={() => void toggle()}>{enabled() ? "Turn off" : "Enable"}</ui.Button>
     </header>
     <Show when={status()}>{(s) => <>
@@ -112,6 +125,12 @@ function Memory(props: { session: MountedSession }) {
         </dl>}</Show>
       </details>
       <Show when={s().chat && ((s().chat!.inFlight + s().chat!.pending) > 0)}><p class="unii-muted">Compacting memory · {s().chat!.inFlight} active · {s().chat!.pending} queued</p></Show>
+      <Show when={s().plugin.update}>{(version) => <p class="unii-notice" role="status"><strong>UniiChat v{version()} is available.</strong> Run <code>opencode plugin update</code>, then restart OpenCode.</p>}</Show>
+      <Show when={s().chat?.damaged}>{(count) => <div class="unii-notice unii-warn" role="status">
+        <p><strong>{count().toLocaleString()} damaged summaries.</strong> They are placeholders or clipped copies from a compaction bug fixed in v0.2.4; repairing rebuilds them from the intact log.</p>
+        <ui.Button size="small" busy={busy()} onClick={() => void repair()}>Repair</ui.Button>
+      </div>}</Show>
+      <Show when={repaired()}>{(text) => <p class="unii-muted" role="status">{text()}</p>}</Show>
       <Show when={s().chat?.lastError}><p class="unii-error" role="alert">{s().chat?.lastError}</p></Show>
     </>}</Show>
     <Show when={state.error() || error()}><p class="unii-error" role="alert">{error() ?? state.error()}</p></Show>
@@ -148,6 +167,8 @@ function Indicator(props: { session: MountedSession; active: boolean }) {
     return <button class="unii-indicator" title={state.error() ?? "Open UniiChat memory"} onClick={() => ctx.layout.open(`${ctx.id}:memory`, session)}>
       <i classList={{ "unii-dot": true, "unii-on": state.value()?.on ?? false }} />UniiChat
       <Show when={state.value()?.on}><span class="unii-muted">{kb(state.value()?.chat?.viewBytes ?? 0)}</span></Show>
+      <Show when={state.value()?.chat?.damaged}><span class="unii-badge" title="Damaged summaries: open the panel to repair">repair</span></Show>
+      <Show when={state.value()?.plugin.update}>{(version) => <span class="unii-badge" title={`UniiChat v${version()} is available: opencode plugin update`}>update</span>}</Show>
       <Show when={state.error()}><span aria-label="Connection error">!</span></Show>
     </button>;
   }}</Show>;

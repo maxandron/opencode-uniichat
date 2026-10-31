@@ -14,8 +14,12 @@ const status = z.object({
     T: z.number(), viewBytes: z.number(), compViewBytes: z.number(), lines: z.number(),
     inFlight: z.number(), pending: z.number(), failed: z.number(),
     lastError: z.string().optional(), last: compaction.optional(), total: totals,
+    /** Summaries `/unii repair` would rebuild (damage from the bug fixed in v0.2.4). */
+    damaged: z.number(),
   }).nullable(),
   lastTurn: usage.extend({ ms: z.number().optional() }).nullable(),
+  /** The server's UniiChat version, and a newer one on GitHub when known. */
+  plugin: z.object({ version: z.string(), update: z.string().optional() }),
 });
 
 // Project only wire fields; unknown/invalid usage counts follow lastUsage's zero default.
@@ -36,12 +40,13 @@ export function statusValue(value: z.infer<typeof status>): z.infer<typeof statu
       inFlight: finite(chat.inFlight), pending: finite(chat.pending), failed: finite(chat.failed),
       ...(chat.lastError === undefined ? {} : { lastError: chat.lastError }),
       ...(chat.last === undefined ? {} : { last: compactionValue(chat.last) }),
-      total: totalsValue(chat.total),
+      total: totalsValue(chat.total), damaged: finite(chat.damaged),
     },
     lastTurn: lastTurn === null ? null : {
       ...usageValue(lastTurn),
       ...(lastTurn.ms === undefined || !Number.isFinite(lastTurn.ms) ? {} : { ms: lastTurn.ms }),
     },
+    plugin: { version: value.plugin.version, ...(value.plugin.update === undefined ? {} : { update: value.plugin.update }) },
   };
 }
 
@@ -54,6 +59,7 @@ export const UniiChatRpc = Rpc.define({
       output: status,
     },
     view: { input: session, output: z.array(z.string()) },
+    repair: { input: session, output: z.object({ dropped: z.number(), leaves: z.number() }) },
     archive: {
       input: z.union([
         session.extend({ id: z.number().int().nonnegative(), n: z.number().int().positive() }),

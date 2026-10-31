@@ -1,0 +1,3 @@
+# 0066: Show the version and a newer one, but do not update
+
+With an unpinned `github:` target, `opencode plugin check` and `plugin update` already find and install new commits, but nobody runs them unprompted. The server reads its version from its package.json and, once per process every six hours, the version in package.json on GitHub's main branch; the TUI and Desktop show both. A failed check shows nothing. Installing stays with the user (`opencode plugin update`, then a restart), which also drops running sessions, so it is never done automatically. `updates.check: false` turns the request off.

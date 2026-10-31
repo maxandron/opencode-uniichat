@@ -1,6 +1,6 @@
 {
   "name": "opencode-uniichat",
-  "version": "0.2.4",
+  "version": "0.2.5",
   "description": "UniiChat for OpenCode v2: a compacted, tree-structured memory in place of the growing transcript, after Victor Taelin's UniiChat recipe.",
   "license": "MIT",
   "type": "module",

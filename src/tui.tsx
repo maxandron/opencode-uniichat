@@ -273,6 +273,7 @@ function Popup(props: { ctx: Context; sessionID: string }) {
       <box flexDirection="row" justifyContent="space-between" flexShrink={0} paddingBottom={1}>
         <text>
           <span style={{ fg: theme.text.base }}><b>UniiChat</b></span>
+          <Show when={status()}>{(current) => <span style={{ fg: theme.text.muted }}>{` v${current().plugin.version}`}</span>}</Show>
           <Show when={status()}>
             {(current) => current().on
               ? <span style={{ fg: theme.text.feedback.success.base }}>{"   ● on"}</span>
@@ -308,6 +309,24 @@ function Popup(props: { ctx: Context; sessionID: string }) {
                 {`${chat()?.total.calls ?? 0} calls`}
               </Stat>
               <Stat label="Last turn">{usageLabel(current().lastTurn)}</Stat>
+              <Show when={chat()?.damaged}>
+                {(count) => (
+                  <Stat label="Repair">
+                    <span style={{ fg: theme.text.feedback.warning.base }}>{`${count()} damaged summaries`}</span>
+                    {dot()}
+                    {"run /unii repair to rebuild them from the log"}
+                  </Stat>
+                )}
+              </Show>
+              <Show when={current().plugin.update}>
+                {(version) => (
+                  <Stat label="Update">
+                    <span style={{ fg: theme.text.feedback.success.base }}>{`v${version()} available`}</span>
+                    {dot()}
+                    {"opencode plugin update, then opencode service restart"}
+                  </Stat>
+                )}
+              </Show>
               <Show when={chat()?.lastError}>
                 {(message) => (
                   <Stat label="Error">
@@ -410,6 +429,8 @@ function SidebarIndicator(props: { ctx: Context; sessionID: string }) {
   const [on, setOn] = createSignal<boolean>();
   const [failed, setFailed] = createSignal(false);
   const [chatError, setChatError] = createSignal(false);
+  const [damaged, setDamaged] = createSignal(0);
+  const [update, setUpdate] = createSignal<string>();
 
   createEffect(() => {
     const sessionID = props.sessionID;
@@ -428,6 +449,8 @@ function SidebarIndicator(props: { ctx: Context; sessionID: string }) {
         if (controller.signal.aborted) return;
         setOn(status.on);
         setChatError(status.chat?.lastError !== undefined);
+        setDamaged(status.chat?.damaged ?? 0);
+        setUpdate(status.plugin.update);
         setFailed(false);
       } catch {
         if (!controller.signal.aborted) setFailed(true);
@@ -453,6 +476,12 @@ function SidebarIndicator(props: { ctx: Context; sessionID: string }) {
       {chatError() && !failed()
         ? <span style={{ fg: ctx.theme.text.feedback.error.base }}>{" · compaction error (/unii)"}</span>
         : null}
+      {damaged() && !failed()
+        ? <span style={{ fg: ctx.theme.text.feedback.warning.base }}>{` · ${damaged()} to repair (/unii repair)`}</span>
+        : null}
+      {update() && !failed()
+        ? <span style={{ fg: ctx.theme.text.muted }}>{` · v${update()} available`}</span>
+        : null}
     </text>
   );
 }
@@ -475,20 +504,20 @@ export default Plugin.define({
           commands: [{
             id: "plugin.uniichat.open",
             title: "UniiChat",
-            description: "View UniiChat memory or switch it on or off",
+            description: "View UniiChat memory, switch it on or off, or repair it",
             group: "Plugin",
             palette: true,
             slash: { name: "unii", arguments: true },
             async run(input) {
               const argument = input?.trim().toLowerCase() ?? "";
-              if (argument !== "" && argument !== "on" && argument !== "off") {
-                ctx.ui.toast.show({ variant: "warning", message: "Use /unii, /unii on, or /unii off." });
+              if (argument !== "" && argument !== "on" && argument !== "off" && argument !== "repair") {
+                ctx.ui.toast.show({ variant: "warning", message: "Use /unii, /unii on, /unii off, or /unii repair." });
                 return;
               }
               const route = ctx.ui.router.current();
               if (route.type !== "session") {
-                if (argument === "off") {
-                  ctx.ui.toast.show({ variant: "warning", message: "No session open: nothing to turn off." });
+                if (argument === "off" || argument === "repair") {
+                  ctx.ui.toast.show({ variant: "warning", message: `No session open: nothing to ${argument === "off" ? "turn off" : "repair"}.` });
                   return;
                 }
                 // No session yet: start one with UniiChat already on, then open it.
@@ -497,6 +526,18 @@ export default Plugin.define({
                   await rpcClient(ctx).set({ sessionID: session.id, on: true }, { location: ctx.location });
                   ctx.ui.router.navigate({ type: "session", sessionID: session.id });
                   ctx.ui.toast.show({ variant: "success", message: "New session with UniiChat on" });
+                } catch (cause) {
+                  ctx.ui.toast.show({ variant: "error", message: errorMessage(cause) });
+                }
+                return;
+              }
+              if (argument === "repair") {
+                try {
+                  const result = await rpcClient(ctx).repair({ sessionID: route.sessionID }, { location: ctx.location });
+                  bumpState((n) => n + 1);
+                  ctx.ui.toast.show(result.dropped === 0
+                    ? { variant: "success", message: "UniiChat: no damaged summaries found" }
+                    : { variant: "success", message: `UniiChat dropped ${result.dropped} damaged summaries; rebuilding them now${result.leaves ? ` (${result.leaves} messages; the next prompt waits for them)` : ""}` });
                 } catch (cause) {
                   ctx.ui.toast.show({ variant: "error", message: errorMessage(cause) });
                 }

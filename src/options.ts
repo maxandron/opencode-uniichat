@@ -50,6 +50,10 @@ export const Schema = z.strictObject({
     /** Added to a /btw question during memory lookups. */
     btwLookup: z.string().default(BTW_LOOKUP_NOTE),
   }).prefault({}),
+  updates: z.strictObject({
+    /** Ask GitHub for a newer version (every 6 hours) and show it in the TUI and desktop app. */
+    check: z.boolean().default(true),
+  }).prefault({}),
   tui: z.strictObject({
     /** How often the popup and sidebar refresh, in ms. */
     pollMs: positive.default(2000),

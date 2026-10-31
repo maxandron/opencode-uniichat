@@ -4,6 +4,7 @@ import * as record from "./record.ts";
 import * as tree from "./tree.ts";
 import * as view from "./view.ts";
 import * as prompts from "./prompts.ts";
+import * as repairs from "./repair.ts";
 import { WorkQueue, isPrefix } from "./queue.ts";
 import { Store, chatDir, type Loaded, type StoreError } from "./store.ts";
 
@@ -60,6 +61,8 @@ export class Chat {
   private lastError: string | undefined;
   private T: number;
   private pending: number;
+  // Damaged nodes found by the last scan (see repair.ts); undefined until scanned.
+  private damage: Set<string> | undefined;
   private readonly lookup: view.Lookup = (l, i) => this.texts.get(key([l, i]));
 
   private constructor(private readonly store: Store, private readonly deps: Deps, loaded: Loaded) {
@@ -391,6 +394,56 @@ export class Chat {
       self.comp = view.createView(comp, false, self.lookup);
       yield* self.notify();
       return [...bases];
+    }).pipe(Effect.uninterruptible));
+  }
+
+  private scan() {
+    const self = this;
+    return Effect.gen(function* () {
+      const days = yield* self.store.nodeDays();
+      const nodes = [...self.texts].map(([id, text]) => {
+        const [l, i] = id.split(":").map(Number) as [number, number];
+        return { l, i, text, day: days.get(id) };
+      });
+      return repairs.damaged(nodes, {
+        verbatim: (i) => { const rec = self.records.get(i); return rec && tree.leafText(rec.kind, rec.text); },
+        clipped: (ref) => ref[0] === 0
+          ? (self.records.has(ref[1]) ? self.clippedSource(ref) : undefined)
+          : tree.children(ref).every((child) => self.lookup(...child) !== undefined) ? self.clippedSource(ref) : undefined,
+      });
+    });
+  }
+
+  /** How many summaries `/unii repair` would drop and rebuild; scanned once per open and after a repair. */
+  damaged() {
+    const self = this;
+    return Effect.gen(function* () {
+      if (self.damage === undefined) self.damage = yield* self.scan();
+      return self.damage.size;
+    });
+  }
+
+  // `/unii repair`: drop the damaged summaries (archived in the store) and rebuild them from the
+  // log, live. Needs the queue idle, so no build in flight reads a node being dropped.
+  repair() {
+    const self = this;
+    return this.mutex.withPermits(1)(Effect.gen(function* () {
+      if (self.queue.inFlight.size || self.unpersisted.size) {
+        return yield* Effect.fail(new ChatError({ message: `UniiChat is compacting (${self.queue.inFlight.size} calls running); run /unii repair again when it is idle.` }));
+      }
+      const bad = yield* self.scan();
+      self.damage = new Set();
+      if (bad.size === 0) return { dropped: 0, leaves: 0, archive: undefined as string | undefined };
+      const archive = yield* self.store.dropNodes(bad);
+      for (const id of bad) self.texts.delete(id);
+      const built = [...self.texts.keys()].map((id) => id.split(":").map(Number) as unknown as tree.Ref);
+      self.queue = WorkQueue.restore(self.T, built);
+      self.pending = self.T - built.filter((ref) => ref[0] === 0).length;
+      self.lastError = undefined;
+      self.refreshSizes();
+      yield* self.notify();
+      yield* self.pump();
+      return { dropped: bad.size, leaves: [...bad].filter((id) => id.startsWith("0:")).length, archive };
     }).pipe(Effect.uninterruptible));
   }
 

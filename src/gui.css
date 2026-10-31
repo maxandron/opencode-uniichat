@@ -28,3 +28,8 @@
 .unii-details summary { cursor:pointer; padding:4px 0; }
 .unii-details dl { display:grid; grid-template-columns:auto 1fr; gap:8px 16px; margin-top:12px; }
 .unii-details dd { text-align:right; color:var(--text-base); font-variant-numeric:tabular-nums; }
+.unii-notice { display:flex; align-items:center; gap:12px; justify-content:space-between; margin:0; padding:10px 12px; border:1px solid var(--border-weak-base); border-radius:8px; font-size:12px; line-height:1.6; }
+.unii-notice p { margin:0; }
+.unii-notice code { font-family:var(--font-family-mono, monospace); font-size:11px; }
+.unii-warn { border-color:var(--icon-warning-base, var(--border-weak-base)); }
+.unii-badge { font-size:10px; padding:1px 6px; border-radius:999px; border:1px solid var(--border-weak-base); color:var(--text-weak); }

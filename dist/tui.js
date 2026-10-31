@@ -41,9 +41,11 @@ var status = z.object({
     failed: z.number(),
     lastError: z.string().optional(),
     last: compaction.optional(),
-    total: totals
+    total: totals,
+    damaged: z.number()
   }).nullable(),
-  lastTurn: usage.extend({ ms: z.number().optional() }).nullable()
+  lastTurn: usage.extend({ ms: z.number().optional() }).nullable(),
+  plugin: z.object({ version: z.string(), update: z.string().optional() })
 });
 var UniiChatRpc = Rpc.define({
   id: "uniichat",
@@ -54,6 +56,7 @@ var UniiChatRpc = Rpc.define({
       output: status
     },
     view: { input: session, output: z.array(z.string()) },
+    repair: { input: session, output: z.object({ dropped: z.number(), leaves: z.number() }) },
     archive: {
       input: z.union([
         session.extend({ id: z.number().int().nonnegative(), n: z.number().int().positive() }),
@@ -419,20 +422,33 @@ function Popup(props) {
       get when() {
         return status();
       },
-      children: (current) => current().on ? (() => {
+      children: (current) => (() => {
         var _el$22 = _$createElement("span");
-        _$insertNode(_el$22, _$createTextNode(`   \u25CF on`));
+        _$insert(_el$22, () => ` v${current().plugin.version}`);
         _$effect((_$p) => _$setProp(_el$22, "style", {
-          fg: theme.text.feedback.success.base
-        }, _$p));
-        return _el$22;
-      })() : (() => {
-        var _el$24 = _$createElement("span");
-        _$insertNode(_el$24, _$createTextNode(`   \u25CB off`));
-        _$effect((_$p) => _$setProp(_el$24, "style", {
           fg: theme.text.muted
         }, _$p));
-        return _el$24;
+        return _el$22;
+      })()
+    }), null);
+    _$insert(_el$11, _$createComponent(Show, {
+      get when() {
+        return status();
+      },
+      children: (current) => current().on ? (() => {
+        var _el$23 = _$createElement("span");
+        _$insertNode(_el$23, _$createTextNode(`   \u25CF on`));
+        _$effect((_$p) => _$setProp(_el$23, "style", {
+          fg: theme.text.feedback.success.base
+        }, _$p));
+        return _el$23;
+      })() : (() => {
+        var _el$25 = _$createElement("span");
+        _$insertNode(_el$25, _$createTextNode(`   \u25CB off`));
+        _$effect((_$p) => _$setProp(_el$25, "style", {
+          fg: theme.text.muted
+        }, _$p));
+        return _el$25;
       })()
     }), null);
     _$insertNode(_el$15, _$createTextNode(`esc`));
@@ -443,84 +459,120 @@ function Popup(props) {
       },
       get fallback() {
         return (() => {
-          var _el$26 = _$createElement("text");
-          _$setProp(_el$26, "flexShrink", 0);
-          _$insert(_el$26, (() => {
+          var _el$27 = _$createElement("text");
+          _$setProp(_el$27, "flexShrink", 0);
+          _$insert(_el$27, (() => {
             var _c$ = _$memo(() => !!statusError());
             return () => _c$() ? `Status error: ${statusError()}` : "Loading status\u2026";
           })());
-          _$effect((_$p) => _$setProp(_el$26, "fg", statusError() ? theme.text.feedback.error.base : theme.text.muted, _$p));
-          return _el$26;
+          _$effect((_$p) => _$setProp(_el$27, "fg", statusError() ? theme.text.feedback.error.base : theme.text.muted, _$p));
+          return _el$27;
         })();
       },
       children: (current) => {
         const chat = () => current().chat;
         const active = () => (chat()?.pending ?? 0) + (chat()?.inFlight ?? 0) > 0;
         return (() => {
-          var _el$27 = _$createElement("box");
-          _$setProp(_el$27, "flexShrink", 0);
-          _$insert(_el$27, _$createComponent(Stat, {
+          var _el$28 = _$createElement("box");
+          _$setProp(_el$28, "flexShrink", 0);
+          _$insert(_el$28, _$createComponent(Stat, {
             label: "Memory",
             get children() {
               return [_$memo(() => _$memo(() => !!chat())() ? `${kilobytes(chat().viewBytes)} view` : "not started"), _$memo(() => _$memo(() => !!chat())() ? dot() : null), _$memo(() => _$memo(() => !!chat())() ? `${chat().lines} lines` : null)];
             }
           }), null);
-          _$insert(_el$27, _$createComponent(Stat, {
+          _$insert(_el$28, _$createComponent(Stat, {
             label: "Compaction",
             get children() {
               return [(() => {
-                var _el$28 = _$createElement("span");
-                _$insert(_el$28, (() => {
+                var _el$29 = _$createElement("span");
+                _$insert(_el$29, (() => {
                   var _c$2 = _$memo(() => !!active());
                   return () => _c$2() ? `${chat().inFlight} running, ${chat().pending} queued` : "idle";
                 })());
-                _$effect((_$p) => _$setProp(_el$28, "style", {
+                _$effect((_$p) => _$setProp(_el$29, "style", {
                   fg: active() ? theme.text.feedback.warning.base : theme.text.muted
                 }, _$p));
-                return _el$28;
+                return _el$29;
               })(), _$memo(() => dot()), _$memo(() => _$memo(() => !!chat()?.last)() ? `last took ${duration(chat().last.ms)}` : "no call yet"), _$memo(() => dot()), _$memo(() => `${chat()?.total.calls ?? 0} calls`)];
             }
           }), null);
-          _$insert(_el$27, _$createComponent(Stat, {
+          _$insert(_el$28, _$createComponent(Stat, {
             label: "Last turn",
             get children() {
               return usageLabel(current().lastTurn);
             }
           }), null);
-          _$insert(_el$27, _$createComponent(Show, {
+          _$insert(_el$28, _$createComponent(Show, {
+            get when() {
+              return chat()?.damaged;
+            },
+            children: (count) => _$createComponent(Stat, {
+              label: "Repair",
+              get children() {
+                return [(() => {
+                  var _el$30 = _$createElement("span");
+                  _$insert(_el$30, () => `${count()} damaged summaries`);
+                  _$effect((_$p) => _$setProp(_el$30, "style", {
+                    fg: theme.text.feedback.warning.base
+                  }, _$p));
+                  return _el$30;
+                })(), _$memo(() => dot()), "run /unii repair to rebuild them from the log"];
+              }
+            })
+          }), null);
+          _$insert(_el$28, _$createComponent(Show, {
+            get when() {
+              return current().plugin.update;
+            },
+            children: (version) => _$createComponent(Stat, {
+              label: "Update",
+              get children() {
+                return [(() => {
+                  var _el$31 = _$createElement("span");
+                  _$insert(_el$31, () => `v${version()} available`);
+                  _$effect((_$p) => _$setProp(_el$31, "style", {
+                    fg: theme.text.feedback.success.base
+                  }, _$p));
+                  return _el$31;
+                })(), _$memo(() => dot()), "opencode plugin update, then opencode service restart"];
+              }
+            })
+          }), null);
+          _$insert(_el$28, _$createComponent(Show, {
             get when() {
               return chat()?.lastError;
             },
             children: (message) => _$createComponent(Stat, {
               label: "Error",
               get children() {
-                var _el$29 = _$createElement("span");
-                _$insert(_el$29, () => message().split(`
+                var _el$32 = _$createElement("span");
+                _$insert(_el$32, () => message().split(`
 `)[0]);
-                _$effect((_$p) => _$setProp(_el$29, "style", {
+                _$effect((_$p) => _$setProp(_el$32, "style", {
                   fg: theme.text.feedback.error.base
                 }, _$p));
-                return _el$29;
+                return _el$32;
               }
             })
           }), null);
-          _$insert(_el$27, _$createComponent(Show, {
+          _$insert(_el$28, _$createComponent(Show, {
             get when() {
               return statusError();
             },
             children: (message) => _$createComponent(Stat, {
               label: "Status",
               get children() {
-                var _el$30 = _$createElement("span");
-                _$insert(_el$30, message);
-                _$effect((_$p) => _$setProp(_el$30, "style", {
+                var _el$33 = _$createElement("span");
+                _$insert(_el$33, message);
+                _$effect((_$p) => _$setProp(_el$33, "style", {
                   fg: theme.text.feedback.error.base
                 }, _$p));
-                return _el$30;
+                return _el$33;
               }
             })
           }), null);
-          return _el$27;
+          return _el$28;
         })();
       }
     }), _el$17);
@@ -536,27 +588,27 @@ function Popup(props) {
         return titles();
       },
       children: (title, index) => [_$memo(() => _$memo(() => index() > 0)() ? (() => {
-        var _el$31 = _$createElement("span");
-        _$insertNode(_el$31, _$createTextNode(`  \u203A  `));
-        _$effect((_$p) => _$setProp(_el$31, "style", {
+        var _el$34 = _$createElement("span");
+        _$insertNode(_el$34, _$createTextNode(`  \u203A  `));
+        _$effect((_$p) => _$setProp(_el$34, "style", {
           fg: theme.text.muted
         }, _$p));
-        return _el$31;
+        return _el$34;
       })() : null), _$memo(() => _$memo(() => index() === titles().length - 1)() ? (() => {
-        var _el$33 = _$createElement("span"), _el$34 = _$createElement("b");
-        _$insertNode(_el$33, _el$34);
-        _$insert(_el$34, title);
-        _$effect((_$p) => _$setProp(_el$33, "style", {
+        var _el$36 = _$createElement("span"), _el$37 = _$createElement("b");
+        _$insertNode(_el$36, _el$37);
+        _$insert(_el$37, title);
+        _$effect((_$p) => _$setProp(_el$36, "style", {
           fg: theme.text.base
         }, _$p));
-        return _el$33;
+        return _el$36;
       })() : (() => {
-        var _el$35 = _$createElement("span");
-        _$insert(_el$35, title);
-        _$effect((_$p) => _$setProp(_el$35, "style", {
+        var _el$38 = _$createElement("span");
+        _$insert(_el$38, title);
+        _$effect((_$p) => _$setProp(_el$38, "style", {
           fg: theme.text.muted
         }, _$p));
-        return _el$35;
+        return _el$38;
       })())]
     }));
     _$insert(_el$19, position);
@@ -565,12 +617,12 @@ function Popup(props) {
         return notice();
       },
       children: (message) => (() => {
-        var _el$36 = _$createElement("text");
-        _$setProp(_el$36, "flexShrink", 0);
-        _$setProp(_el$36, "paddingTop", 1);
-        _$insert(_el$36, message);
-        _$effect((_$p) => _$setProp(_el$36, "fg", zoomError() || viewError() ? theme.text.feedback.error.base : theme.text.muted, _$p));
-        return _el$36;
+        var _el$39 = _$createElement("text");
+        _$setProp(_el$39, "flexShrink", 0);
+        _$setProp(_el$39, "paddingTop", 1);
+        _$insert(_el$39, message);
+        _$effect((_$p) => _$setProp(_el$39, "fg", zoomError() || viewError() ? theme.text.feedback.error.base : theme.text.muted, _$p));
+        return _el$39;
       })()
     }), _el$20);
     _$use((element) => scroll = element, _el$20);
@@ -592,12 +644,12 @@ function Popup(props) {
       },
       get fallback() {
         return (() => {
-          var _el$37 = _$createElement("text");
-          _$setProp(_el$37, "paddingLeft", 1);
-          _$setProp(_el$37, "paddingRight", 1);
-          _$insert(_el$37, () => current().text);
-          _$effect((_$p) => _$setProp(_el$37, "fg", theme.text.base, _$p));
-          return _el$37;
+          var _el$40 = _$createElement("text");
+          _$setProp(_el$40, "paddingLeft", 1);
+          _$setProp(_el$40, "paddingRight", 1);
+          _$insert(_el$40, () => current().text);
+          _$effect((_$p) => _$setProp(_el$40, "fg", theme.text.base, _$p));
+          return _el$40;
         })();
       },
       children: (level) => _$createComponent(For, {
@@ -605,13 +657,13 @@ function Popup(props) {
           return level().lines;
         },
         children: (line, index) => (() => {
-          var _el$38 = _$createElement("box");
-          _$setProp(_el$38, "onMouseDown", () => select(index()));
-          _$setProp(_el$38, "onMouseUp", () => {
+          var _el$41 = _$createElement("box");
+          _$setProp(_el$41, "onMouseDown", () => select(index()));
+          _$setProp(_el$41, "onMouseUp", () => {
             select(index());
             zoomIn();
           });
-          _$insert(_el$38, _$createComponent(Line, {
+          _$insert(_el$41, _$createComponent(Line, {
             line,
             get selected() {
               return index() === level().selected;
@@ -620,8 +672,8 @@ function Popup(props) {
               return gutter(level().lines);
             }
           }));
-          _$effect((_$p) => _$setProp(_el$38, "backgroundColor", index() === level().selected ? theme.background.action.primary.focused : RGBA.fromInts(0, 0, 0, 0), _$p));
-          return _el$38;
+          _$effect((_$p) => _$setProp(_el$41, "backgroundColor", index() === level().selected ? theme.background.action.primary.focused : RGBA.fromInts(0, 0, 0, 0), _$p));
+          return _el$41;
         })()
       })
     }));
@@ -635,26 +687,26 @@ function Popup(props) {
         return keys();
       },
       children: ([key, label]) => (() => {
-        var _el$39 = _$createElement("text"), _el$40 = _$createElement("span"), _el$41 = _$createElement("b"), _el$42 = _$createElement("span");
-        _$insertNode(_el$39, _el$40);
-        _$insertNode(_el$39, _el$42);
-        _$insertNode(_el$40, _el$41);
-        _$insert(_el$41, key);
-        _$insert(_el$42, ` ${label}`);
+        var _el$42 = _$createElement("text"), _el$43 = _$createElement("span"), _el$44 = _$createElement("b"), _el$45 = _$createElement("span");
+        _$insertNode(_el$42, _el$43);
+        _$insertNode(_el$42, _el$45);
+        _$insertNode(_el$43, _el$44);
+        _$insert(_el$44, key);
+        _$insert(_el$45, ` ${label}`);
         _$effect((_p$) => {
           var _v$10 = {
             fg: theme.text.base
           }, _v$11 = {
             fg: theme.text.muted
           };
-          _v$10 !== _p$.e && (_p$.e = _$setProp(_el$40, "style", _v$10, _p$.e));
-          _v$11 !== _p$.t && (_p$.t = _$setProp(_el$42, "style", _v$11, _p$.t));
+          _v$10 !== _p$.e && (_p$.e = _$setProp(_el$43, "style", _v$10, _p$.e));
+          _v$11 !== _p$.t && (_p$.t = _$setProp(_el$45, "style", _v$11, _p$.t));
           return _p$;
         }, {
           e: undefined,
           t: undefined
         });
-        return _el$39;
+        return _el$42;
       })()
     }));
     _$effect((_p$) => {
@@ -685,6 +737,8 @@ function SidebarIndicator(props) {
   const [on, setOn] = createSignal();
   const [failed, setFailed] = createSignal(false);
   const [chatError, setChatError] = createSignal(false);
+  const [damaged, setDamaged] = createSignal(0);
+  const [update, setUpdate] = createSignal();
   createEffect(() => {
     const sessionID = props.sessionID;
     stateVersion();
@@ -705,6 +759,8 @@ function SidebarIndicator(props) {
           return;
         setOn(status.on);
         setChatError(status.chat?.lastError !== undefined);
+        setDamaged(status.chat?.damaged ?? 0);
+        setUpdate(status.plugin.update);
         setFailed(false);
       } catch {
         if (!controller.signal.aborted)
@@ -723,20 +779,42 @@ function SidebarIndicator(props) {
   const label = () => failed() ? "error" : on() === undefined ? "\u2026" : on() ? "enabled" : "disabled";
   const color = () => failed() ? ctx.theme.text.feedback.error.base : on() ? ctx.theme.text.feedback.success.base : ctx.theme.text.muted;
   return (() => {
-    var _el$43 = _$createElement("text"), _el$44 = _$createElement("span"), _el$46 = _$createElement("span");
-    _$insertNode(_el$43, _el$44);
-    _$insertNode(_el$43, _el$46);
-    _$insertNode(_el$44, _$createTextNode(`UniiChat: `));
-    _$insert(_el$46, label);
-    _$insert(_el$43, (() => {
+    var _el$46 = _$createElement("text"), _el$47 = _$createElement("span"), _el$49 = _$createElement("span");
+    _$insertNode(_el$46, _el$47);
+    _$insertNode(_el$46, _el$49);
+    _$insertNode(_el$47, _$createTextNode(`UniiChat: `));
+    _$insert(_el$49, label);
+    _$insert(_el$46, (() => {
       var _c$3 = _$memo(() => !!(chatError() && !failed()));
       return () => _c$3() ? (() => {
-        var _el$47 = _$createElement("span");
-        _$insertNode(_el$47, _$createTextNode(` \xB7 compaction error (/unii)`));
-        _$effect((_$p) => _$setProp(_el$47, "style", {
+        var _el$50 = _$createElement("span");
+        _$insertNode(_el$50, _$createTextNode(` \xB7 compaction error (/unii)`));
+        _$effect((_$p) => _$setProp(_el$50, "style", {
           fg: ctx.theme.text.feedback.error.base
         }, _$p));
-        return _el$47;
+        return _el$50;
+      })() : null;
+    })(), null);
+    _$insert(_el$46, (() => {
+      var _c$4 = _$memo(() => !!(damaged() && !failed()));
+      return () => _c$4() ? (() => {
+        var _el$52 = _$createElement("span");
+        _$insert(_el$52, () => ` \xB7 ${damaged()} to repair (/unii repair)`);
+        _$effect((_$p) => _$setProp(_el$52, "style", {
+          fg: ctx.theme.text.feedback.warning.base
+        }, _$p));
+        return _el$52;
+      })() : null;
+    })(), null);
+    _$insert(_el$46, (() => {
+      var _c$5 = _$memo(() => !!(update() && !failed()));
+      return () => _c$5() ? (() => {
+        var _el$53 = _$createElement("span");
+        _$insert(_el$53, () => ` \xB7 v${update()} available`);
+        _$effect((_$p) => _$setProp(_el$53, "style", {
+          fg: ctx.theme.text.muted
+        }, _$p));
+        return _el$53;
       })() : null;
     })(), null);
     _$effect((_p$) => {
@@ -745,14 +823,14 @@ function SidebarIndicator(props) {
       }, _v$13 = {
         fg: color()
       };
-      _v$12 !== _p$.e && (_p$.e = _$setProp(_el$44, "style", _v$12, _p$.e));
-      _v$13 !== _p$.t && (_p$.t = _$setProp(_el$46, "style", _v$13, _p$.t));
+      _v$12 !== _p$.e && (_p$.e = _$setProp(_el$47, "style", _v$12, _p$.e));
+      _v$13 !== _p$.t && (_p$.t = _$setProp(_el$49, "style", _v$13, _p$.t));
       return _p$;
     }, {
       e: undefined,
       t: undefined
     });
-    return _el$43;
+    return _el$46;
   })();
 }
 var tui_default = Plugin.define({
@@ -779,7 +857,7 @@ var tui_default = Plugin.define({
           commands: [{
             id: "plugin.uniichat.open",
             title: "UniiChat",
-            description: "View UniiChat memory or switch it on or off",
+            description: "View UniiChat memory, switch it on or off, or repair it",
             group: "Plugin",
             palette: true,
             slash: {
@@ -788,19 +866,19 @@ var tui_default = Plugin.define({
             },
             async run(input) {
               const argument = input?.trim().toLowerCase() ?? "";
-              if (argument !== "" && argument !== "on" && argument !== "off") {
+              if (argument !== "" && argument !== "on" && argument !== "off" && argument !== "repair") {
                 ctx.ui.toast.show({
                   variant: "warning",
-                  message: "Use /unii, /unii on, or /unii off."
+                  message: "Use /unii, /unii on, /unii off, or /unii repair."
                 });
                 return;
               }
               const route = ctx.ui.router.current();
               if (route.type !== "session") {
-                if (argument === "off") {
+                if (argument === "off" || argument === "repair") {
                   ctx.ui.toast.show({
                     variant: "warning",
-                    message: "No session open: nothing to turn off."
+                    message: `No session open: nothing to ${argument === "off" ? "turn off" : "repair"}.`
                   });
                   return;
                 }
@@ -821,6 +899,29 @@ var tui_default = Plugin.define({
                   ctx.ui.toast.show({
                     variant: "success",
                     message: "New session with UniiChat on"
+                  });
+                } catch (cause) {
+                  ctx.ui.toast.show({
+                    variant: "error",
+                    message: errorMessage(cause)
+                  });
+                }
+                return;
+              }
+              if (argument === "repair") {
+                try {
+                  const result = await rpcClient(ctx).repair({
+                    sessionID: route.sessionID
+                  }, {
+                    location: ctx.location
+                  });
+                  bumpState((n) => n + 1);
+                  ctx.ui.toast.show(result.dropped === 0 ? {
+                    variant: "success",
+                    message: "UniiChat: no damaged summaries found"
+                  } : {
+                    variant: "success",
+                    message: `UniiChat dropped ${result.dropped} damaged summaries; rebuilding them now${result.leaves ? ` (${result.leaves} messages; the next prompt waits for them)` : ""}`
                   });
                 } catch (cause) {
                   ctx.ui.toast.show({

@@ -19,9 +19,10 @@ import { hostMessages, toMessages } from "./messages.ts";
 import { chatDir } from "./store.ts";
 import { btwMemory, lookupCalls, lookupResults, systemText, stateText, ZOOM_DESCRIPTION, DATE_DESCRIPTION } from "./prompts.ts";
 import { UniiChatRpc, statusValue } from "./rpc.ts";
+import * as updates from "./update.ts";
 
 export class IntegrationError extends Data.TaggedError("UniiChatIntegrationError")<{ message: string }> {}
-type Chat = Pick<engine.Chat, "log" | "logAgent" | "agentName" | "system" | "setSystem" | "setTools" | "awaitSummarized" | "renderView" | "zoom" | "date" | "status" | "latestSource" | "undoneFrom" | "rewind">;
+type Chat = Pick<engine.Chat, "log" | "logAgent" | "agentName" | "system" | "setSystem" | "setTools" | "awaitSummarized" | "renderView" | "zoom" | "date" | "status" | "latestSource" | "undoneFrom" | "rewind" | "damaged" | "repair">;
 export interface IntegrationOptions {
   /** Plugin options; defaults to `ctx.options`. */
   options?: unknown;
@@ -432,11 +433,22 @@ export const integrate = (ctx: Plugin.Context, options: IntegrationOptions = {})
       const rows = yield* readHistory(sessionID);
       const chatID = yield* target(sessionID);
       const chat = yield* get(chatID);
-      return statusValue({ on, chat: chat.status(), lastTurn: turn.lastUsage(rows) });
+      const damaged = yield* chat.damaged();
+      const update = settings.updates.check ? updates.available() : undefined;
+      return statusValue({
+        on, chat: { ...chat.status(), damaged }, lastTurn: turn.lastUsage(rows),
+        plugin: { version: updates.VERSION, ...(update ? { update } : {}) },
+      });
     }).pipe(Effect.orDie),
     view: ({ sessionID }) => Effect.gen(function* () {
       const view = (yield* get(yield* target(sessionID))).renderView();
       return [...view.blocks, view.tail].join("").replace(/^<chat>\n/, "").replace(/\n?<\/chat>$/, "").split("\n").filter(Boolean);
+    }).pipe(Effect.orDie),
+    repair: ({ sessionID }) => Effect.gen(function* () {
+      const chat = yield* get(yield* target(sessionID));
+      const result = yield* chat.repair();
+      if (result.dropped) yield* Effect.logInfo(`UniiChat repair of ${sessionID} dropped ${result.dropped} damaged summaries (${result.leaves} leaves) to ${result.archive}`);
+      return { dropped: result.dropped, leaves: result.leaves };
     }).pipe(Effect.orDie),
     archive: (input) => Effect.gen(function* () {
       const chat = yield* get(yield* target(input.sessionID));

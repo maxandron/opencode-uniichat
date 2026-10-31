@@ -61,6 +61,8 @@ function fixture(initial: Row[], on = true) {
     },
     rewind: (k: number) => Effect.sync(() => logged.splice(k).map((item) => item.src.split(":")[0]!)),
     status: () => ({ T: 0, viewBytes: 0, compViewBytes: 0, lines: 0, inFlight: 0, pending: 0, failed: 0, lastError: undefined, last: undefined, total: { calls: 0, ms: 0 } }),
+    damaged: () => Effect.succeed(0),
+    repair: () => Effect.succeed({ dropped: 0, leaves: 0, archive: undefined }),
   };
   let contextReads = 0;
   const childID = Session.ID.make(`${sessionID}_child`);
@@ -82,7 +84,7 @@ function fixture(initial: Row[], on = true) {
     rpc: { register: (_def: unknown, methods: typeof handlers) => Effect.sync(() => { handlers = methods; }) },
     event: { subscribe: () => Stream.fromQueue(events) },
   } as unknown as Plugin.Context;
-  const options: IntegrationOptions = { get: () => Effect.succeed(chat), sources: () => Effect.succeed(new Set()), older: () => Effect.succeed(undefined) };
+  const options: IntegrationOptions = { options: { updates: { check: false } }, get: () => Effect.succeed(chat), sources: () => Effect.succeed(new Set()), older: () => Effect.succeed(undefined) };
   const event = (messages: Message[] = [msg("user", "task", "msg_new")], sid = sessionID): SessionContext => ({
     sessionID: sid, agent: "build" as SessionContext["agent"], model: {} as SessionContext["model"],
     system: [{ type: "text", text: "vanilla" }, { type: "text", text: "# Code Mode\n\ncatalog\n\nToday's date: ignore" }],

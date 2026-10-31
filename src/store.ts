@@ -154,6 +154,27 @@ function optional(path: string): string | undefined {
   }
 }
 
+// Rewrite a directory's day files without the lines `drop` selects, appending those to `archive`.
+function cutLines(dir: string, archive: string, drop: (value: any) => boolean): number {
+  let dropped = 0;
+  for (const file of fs.readdirSync(dir).filter((s) => /^\d{4}-\d{2}-\d{2}\.jsonl$/.test(s)).sort()) {
+    const path = join(dir, file);
+    const keep: string[] = [];
+    const gone: string[] = [];
+    for (const line of fs.readFileSync(path, "utf8").split("\n")) {
+      if (line === "") continue;
+      let value: unknown;
+      try { value = JSON.parse(line); } catch { keep.push(line); continue; }
+      (drop(value) ? gone : keep).push(line);
+    }
+    if (!gone.length) continue;
+    append(archive, undefined, gone.join("\n"));
+    atomic(path, keep.map((line) => `${line}\n`).join(""));
+    dropped += gone.length;
+  }
+  return dropped;
+}
+
 export class Store {
   private constructor(readonly dir: string) {}
 
@@ -227,23 +248,7 @@ export class Store {
     return attempt("rewind", this.dir, () => {
       const archive = join(this.dir, "undone", new Date().toISOString().replace(/[:.]/g, "-"));
       fs.mkdirSync(join(archive, "files"), { recursive: true });
-      const cut = (name: string, drop: (value: any) => boolean) => {
-        const dir = join(this.dir, name);
-        for (const file of fs.readdirSync(dir).filter((s) => /^\d{4}-\d{2}-\d{2}\.jsonl$/.test(s)).sort()) {
-          const path = join(dir, file);
-          const keep: string[] = [];
-          const gone: string[] = [];
-          for (const line of fs.readFileSync(path, "utf8").split("\n")) {
-            if (line === "") continue;
-            let value: unknown;
-            try { value = JSON.parse(line); } catch { keep.push(line); continue; }
-            (drop(value) ? gone : keep).push(line);
-          }
-          if (!gone.length) continue;
-          append(join(archive, `${name}.jsonl`), undefined, gone.join("\n"));
-          atomic(path, keep.map((line) => `${line}\n`).join(""));
-        }
-      };
+      const cut = (name: string, drop: (value: any) => boolean) => cutLines(join(this.dir, name), join(archive, `${name}.jsonl`), drop);
       cut("tree", (node: StoredNode) => last(node.l, node.i) >= k);
       for (const file of fs.readdirSync(join(this.dir, "files"))) {
         const match = /^(\d+)-\d+\./.exec(file);
@@ -251,6 +256,32 @@ export class Store {
       }
       snapshot(this.dir, [JSON.stringify(chat), JSON.stringify(comp), JSON.stringify(serializeBatch(batch.chat, batch.compaction))]);
       cut("main", (rec: LogRecord) => rec.i >= k);
+    });
+  }
+
+  /** The day file ("YYYY-MM-DD") each tree node was first written to, by "l:i". */
+  nodeDays(): Effect.Effect<Map<string, string>, StoreError> {
+    return attempt("nodeDays", join(this.dir, "tree"), () => {
+      const days = new Map<string, string>();
+      const dir = join(this.dir, "tree");
+      for (const file of fs.readdirSync(dir).filter((s) => /^\d{4}-\d{2}-\d{2}\.jsonl$/.test(s)).sort()) {
+        for (const node of jsonl<StoredNode>(join(dir, file), [])) {
+          const id = `${node.l}:${node.i}`;
+          if (!days.has(id)) days.set(id, file.slice(0, 10));
+        }
+      }
+      return days;
+    });
+  }
+
+  // `/unii repair`: move the given tree nodes ("l:i") to repaired/<stamp>/tree.jsonl, so they are
+  // built again from the log. Returns the archive directory.
+  dropNodes(ids: ReadonlySet<string>): Effect.Effect<string, StoreError> {
+    return attempt("dropNodes", this.dir, () => {
+      const archive = join(this.dir, "repaired", new Date().toISOString().replace(/[:.]/g, "-"));
+      fs.mkdirSync(archive, { recursive: true });
+      cutLines(join(this.dir, "tree"), join(archive, "tree.jsonl"), (node: StoredNode) => ids.has(`${node.l}:${node.i}`));
+      return archive;
     });
   }
 

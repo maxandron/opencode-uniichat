@@ -28,7 +28,7 @@ The current source needs OpenCode v2.2 or later. Tagged v0.2.1–v0.2.3 releases
 opencode plugin add github:maxandron/opencode-uniichat
 ```
 
-To pin a version, add a tag or full commit hash: `github:maxandron/opencode-uniichat#<tag-or-sha>`. To update, run `opencode plugin check`, then `opencode plugin update`.
+To pin a version, add a tag or full commit hash: `github:maxandron/opencode-uniichat#<tag-or-sha>`. A pin never shows as outdated. To update, run `opencode plugin check`, then `opencode plugin update`, then `opencode service restart`. The popup, sidebar and Desktop panel show the running version and say when a newer one is on GitHub; nothing installs by itself.
 
 Or add it by hand. The server part goes in `opencode.json(c)` and the terminal UI part goes in `cli.json`:
 
@@ -44,7 +44,8 @@ Or add it by hand. The server part goes in `opencode.json(c)` and the terminal U
 - `/unii on` switches UniiChat on for the current session, starting at the next turn. With no session open, it starts a new session with UniiChat on. The first time, the session's earlier turns are imported into memory.
 - `/unii off` returns the session to vanilla OpenCode. Memory is kept, and `/unii on` resumes it.
 - `/unii` opens the memory popup. It shows the status and the live view. Up/Down move, Enter or a click zooms into a line, and Esc goes back and then closes.
-- The sidebar shows whether UniiChat is on, and `· compaction error (/unii)` when a compaction failed. The popup shows the error.
+- `/unii repair` rebuilds summaries damaged by a compaction bug (v0.2.3 and earlier with OpenCode 2.2): placeholder greetings ("What would you like me to do with UniiChat?") and clipped copies saved in place of a summary, plus the merges above them. They move to `repaired/<time>/tree.jsonl` in the chat's folder and are built again from the log, which the bug never touched. This costs a compaction call per summary, and the next prompt waits until the dropped messages are summarized again. The popup and sidebar show how many a session has.
+- The sidebar shows whether UniiChat is on, `· compaction error (/unii)` when a compaction failed, `· N to repair (/unii repair)`, and `· vX available` when there is an update. The popup shows the details.
 
 The system prompt (with AGENTS.md, the skills list and the Code Mode catalog) is frozen at `/unii on`. To pick up edits, run `/unii off` and then `/unii on`.
 
@@ -52,7 +53,7 @@ The system prompt (with AGENTS.md, the skills list and the Code Mode catalog) is
 
 The same package includes an OpenCode Desktop frontend. List it in your global `opencode.json(c)`; Desktop does not read `cli.json`. The server and terminal frontend stay available.
 
-Open **UniiChat memory** from the command palette, the session panel's **+** menu, the session header indicator, or `/unii`. The panel shows session status, context size, and the live memory view. Enable or turn off memory with its button, select a record to zoom in, and use **Back** or **Esc** to zoom out. Subagent reports offer a link to their full transcript.
+Open **UniiChat memory** from the command palette, the session panel's **+** menu, the session header indicator, or `/unii`. The panel shows session status, context size, and the live memory view. Enable or turn off memory with its button, repair damaged summaries with **Repair**, select a record to zoom in, and use **Back** or **Esc** to zoom out. Subagent reports offer a link to their full transcript.
 
 The panel follows the displayed session, including sessions on remote servers where UniiChat is installed. Requests are cancelled when you switch sessions or close the panel. Desktop's plugin API is experimental and may change between OpenCode releases.
 
@@ -118,6 +119,10 @@ Default configuration (`opencode.jsonc`):
           // "subagent": "...",
           // Instructions added to /btw questions during memory lookups.
           // "btwLookup": "..."
+        },
+        "updates": {
+          // Check GitHub's main branch for a newer version every 6 hours and show it; nothing is installed.
+          "check": true
         },
         "tui": {
           // Popup/sidebar refresh interval in milliseconds. Set in cli.json.
