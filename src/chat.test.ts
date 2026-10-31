@@ -4,7 +4,7 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { Deferred, Effect, Fiber, Queue } from "effect";
 import { TestClock } from "effect/testing";
-import { Chat, COMPACTION, type Deps, type Item } from "./chat.ts";
+import { Chat, COMPACTION, ChatError, get, type Deps, type Item } from "./chat.ts";
 import type { Input, Output } from "./compactor.ts";
 import { Store, StoreError } from "./store.ts";
 import { clipEcho, formatDate, utf8Size } from "./record.ts";
@@ -702,5 +702,41 @@ test("a compaction started before a rewind is dropped, and its slot is rebuilt f
     yield* chat.awaitSummarized();
     expect(chat.renderView().tail).toContain("1+1|fresh summary");
     expect(chat.renderView().tail).not.toContain("stale");
+  }));
+});
+
+test("a newer copy of the module takes a chat over: the older one stops writing and its summaries are built again", async () => {
+  // A second import of the module, as when OpenCode loads an updated copy of the package.
+  const copy: string = "./chat.ts?copy=newer";
+  const newer = await import(copy) as typeof import("./chat.ts");
+  expect(newer.get).not.toBe(get);
+  const dir = temp();
+  await run(Effect.gen(function* () {
+    const oldFake = yield* controlled();
+    const old = yield* get("ses_takeover", oldFake.deps, dir);
+    yield* ready(old);
+    yield* old.log([item(0, "L".repeat(600))]);
+    const stale = yield* Queue.take(oldFake.calls);
+
+    const newFake = yield* controlled();
+    const chat = yield* newer.get("ses_takeover", newFake.deps, dir);
+    expect(chat).not.toBe(old);
+    // The older copy's summary arrives after the takeover: it is dropped, not written.
+    yield* Deferred.succeed(stale.reply, output("from the old copy"));
+    yield* flush;
+    expect((yield* load(dir)).nodes).toHaveLength(0);
+    expect((yield* old.log([item(1)]).pipe(Effect.flip))).toBeInstanceOf(ChatError);
+    expect((yield* get("ses_takeover", oldFake.deps, dir).pipe(Effect.flip))).toBeInstanceOf(ChatError);
+    // Waiting on the closed chat returns instead of hanging.
+    yield* old.awaitSummarized();
+
+    // The newer copy reopened the chat from the store and builds the node itself.
+    expect(yield* newer.get("ses_takeover", newFake.deps, dir)).toBe(chat);
+    yield* ready(chat);
+    const fresh = yield* Queue.take(newFake.calls);
+    yield* Deferred.succeed(fresh.reply, output("from the new copy"));
+    yield* chat.awaitSummarized();
+    expect((yield* load(dir)).nodes.map((node) => node.text)).toEqual(["from the new copy"]);
+    expect((yield* load(dir)).records).toHaveLength(1);
   }));
 });

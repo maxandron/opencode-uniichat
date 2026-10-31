@@ -63,6 +63,8 @@ export class Chat {
   private pending: number;
   // Damaged nodes found by the last scan (see repair.ts); undefined until scanned.
   private damage: Set<string> | undefined;
+  // Set when a newer copy of the plugin takes the chat over (see `get`): nothing more is written.
+  private closed = false;
   private readonly lookup: view.Lookup = (l, i) => this.texts.get(key([l, i]));
 
   private constructor(private readonly store: Store, private readonly deps: Deps, loaded: Loaded) {
@@ -108,6 +110,20 @@ export class Chat {
       }
       yield* self.saveViews();
     });
+  }
+
+  // The caller holds the mutex.
+  private live() {
+    return this.closed ? Effect.fail(new ChatError({ message: "UniiChat was updated in this process; this chat moved to the newer copy." })) : Effect.void;
+  }
+
+  /** Stop for good: in-flight summaries are dropped and nothing more is written. Waits for any write in progress. */
+  close() {
+    const self = this;
+    return this.mutex.withPermits(1)(Effect.gen(function* () {
+      self.closed = true;
+      yield* self.notify();
+    }));
   }
 
   private notify() {
@@ -157,6 +173,7 @@ export class Chat {
   log(items: readonly Item[]) {
     const self = this;
     return this.mutex.withPermits(1)(Effect.gen(function* () {
+      yield* self.live();
       for (const item of items) {
         if (item.kind === "echo" && self.src.has(item.src)) continue;
         const pages = yield* self.pages(item, self.src);
@@ -195,7 +212,7 @@ export class Chat {
   private pump(retryWrites = true): Effect.Effect<void, StoreError> {
     const self = this;
     return Effect.gen(function* () {
-      if (self.systemText === undefined || self.tools === undefined) return;
+      if (self.closed || self.systemText === undefined || self.tools === undefined) return;
       if (retryWrites) {
         for (const { ref, text } of self.unpersisted.values()) {
           const saved = yield* self.persist(ref, text).pipe(Effect.exit);
@@ -327,6 +344,8 @@ export class Chat {
       const retained = self.unpersisted.get(key(ref));
       const result = yield* (retained ? Effect.succeed(retained.text) : self.compact(ref)).pipe(Effect.exit);
       yield* self.mutex.withPermits(1)(Effect.gen(function* () {
+        // The newer copy that took the chat over builds this node again.
+        if (self.closed) return;
         if (self.cuts.slice(epoch).some((k) => tree.last(...ref) >= k)) {
           // The records this node summarized were undone while it was being built.
           yield* self.notify();
@@ -371,6 +390,7 @@ export class Chat {
   rewind(k: number) {
     const self = this;
     return this.mutex.withPermits(1)(Effect.gen(function* () {
+      yield* self.live();
       if (!Number.isSafeInteger(k) || k < 0 || k >= self.T) return [] as string[];
       const chat = view.cut(self.chat.lines, k);
       const comp = view.cut(self.comp.lines, k);
@@ -429,6 +449,7 @@ export class Chat {
   repair() {
     const self = this;
     return this.mutex.withPermits(1)(Effect.gen(function* () {
+      yield* self.live();
       if (self.queue.inFlight.size || self.unpersisted.size) {
         return yield* Effect.fail(new ChatError({ message: `UniiChat is compacting (${self.queue.inFlight.size} calls running); run /unii repair again when it is idle.` }));
       }
@@ -454,7 +475,8 @@ export class Chat {
       const T = self.T;
       let delay = 1000;
       yield* self.mutex.withPermits(1)(self.pump());
-      while (!self.queue.waitDone(T)) {
+      // A closed chat never finishes; its caller gets the view as it stands.
+      while (!self.closed && !self.queue.waitDone(T)) {
         const next = self.changed;
         if (self.queue.failedNodes.size) {
           const until = (yield* Effect.clockWith((clock) => clock.currentTimeMillis)) + delay;
@@ -531,6 +553,7 @@ export class Chat {
   logAgent(name: string, items: readonly Item[]) {
     const self = this;
     return this.mutex.withPermits(1)(Effect.gen(function* () {
+      yield* self.live();
       if (!self.agents.has(name)) return yield* Effect.fail(new ChatError({ message: `Unknown agent: ${name}` }));
       const records = self.agents.get(name)!;
       const src = self.agentSrc.get(name)!;
@@ -550,6 +573,7 @@ export class Chat {
   setSystem(text: string) {
     const self = this;
     return this.mutex.withPermits(1)(Effect.gen(function* () {
+      yield* self.live();
       yield* self.store.saveSystem(text);
       self.systemText = text;
       yield* self.pump();
@@ -581,16 +605,44 @@ export class Chat {
   }
 }
 
-const registry = new Map<string, Deferred.Deferred<Chat, StoreError>>();
-export function get(sessionID: string, deps: Deps): Effect.Effect<Chat, StoreError> {
+// One chat per session in the whole process, across copies of this module. OpenCode loads a new copy
+// on a package update or config reload, and a chat opened by an older copy keeps building summaries
+// in the background with the older code. So the newest copy takes the chat over: it closes the
+// older copy's Chat and opens the chat again from the store. Only plain promises cross copies, since
+// each copy may bring its own Effect. Copies before v0.2.7 do not take part (ADR-0068).
+interface Entry {
+  readonly copy: number;
+  /** Settles once the chat is closed and no longer writes. */
+  readonly close: () => Promise<void>;
+}
+interface Shared { copies: number; readonly chats: Map<string, Entry> }
+const SHARED = Symbol.for("opencode-uniichat.chats.v1");
+const shared = (globalThis as { [SHARED]?: Shared })[SHARED] ??= { copies: 0, chats: new Map() };
+const COPY = ++shared.copies;
+const local = new Map<string, Deferred.Deferred<Chat, StoreError | ChatError>>();
+
+export function get(sessionID: string, deps: Deps, dir = chatDir(sessionID)): Effect.Effect<Chat, StoreError | ChatError> {
   return Effect.uninterruptibleMask((restore) => Effect.gen(function* () {
-    let loaded = registry.get(sessionID);
-    if (!loaded) {
-      loaded = Deferred.makeUnsafe<Chat, StoreError>();
-      registry.set(sessionID, loaded);
-      if (deps.owner) yield* Effect.logInfo(`UniiChat chat ${sessionID} opened by instance ${deps.owner}`);
-      yield* Effect.forkDetach(Deferred.complete(loaded, Chat.open(chatDir(sessionID), deps)));
+    const entry = shared.chats.get(sessionID);
+    const mine = local.get(sessionID);
+    if (entry?.copy === COPY && mine) return yield* restore(Deferred.await(mine));
+    if (entry && entry.copy > COPY) {
+      return yield* Effect.fail(new ChatError({ message: `UniiChat was updated in this process; chat ${sessionID} is served by the newer copy.` }));
     }
+    const loaded = Deferred.makeUnsafe<Chat, StoreError | ChatError>();
+    local.set(sessionID, loaded);
+    // Registered before any yield, so a concurrent get of this copy waits for this open.
+    shared.chats.set(sessionID, {
+      copy: COPY,
+      close: () => Effect.runPromise(Deferred.await(loaded).pipe(Effect.flatMap((chat) => chat.close()), Effect.ignore)),
+    });
+    if (entry) yield* Effect.logInfo(`UniiChat chat ${sessionID} taken over from an older copy by instance ${deps.owner ?? "?"}`);
+    else if (deps.owner) yield* Effect.logInfo(`UniiChat chat ${sessionID} opened by instance ${deps.owner}`);
+    yield* Effect.forkDetach(Deferred.complete(loaded, Effect.gen(function* () {
+      // The older chat's last write lands before the store is read again.
+      if (entry) yield* Effect.promise(() => entry.close().catch(() => undefined));
+      return yield* Chat.open(dir, deps);
+    })));
     return yield* restore(Deferred.await(loaded));
   }));
 }
