@@ -74,3 +74,4 @@ A new decision gets the next number; a changed decision gets a new record, and t
 | [0064](0064-calls-shared-across-instances.md) | Calls in flight are shared across plugin instances, and fail closed | Accepted |
 | [0065](0065-repair-command.md) | `/unii repair` rebuilds damaged summaries in place | Accepted |
 | [0066](0066-update-notice.md) | Show the version and a newer one, but do not update | Accepted |
+| [0067](0067-calls-forbid-tool-use.md) | UniiChat's calls forbid tool use | Accepted |

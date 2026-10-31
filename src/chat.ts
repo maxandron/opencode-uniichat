@@ -300,7 +300,8 @@ export class Chat {
           const line = out.text?.trim();
           if (line === undefined) {
             if (shortest !== undefined) return shortest;
-            // The model answered with no line (a refusal, or thinking used the whole output limit).
+            // The model answered with no line (a refusal, or thinking used the whole output limit; tool
+            // calls are forbidden, ADR-0067). The transport logs how the response ended.
             // Asking again fails alike, so the node becomes its source clipped and the chat goes on.
             yield* Effect.logWarning(`UniiChat compaction of ${tree.name(...ref)} returned no text; using its source clipped`);
             return self.clippedSource(ref);

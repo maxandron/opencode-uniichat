@@ -68,18 +68,34 @@ export function make(ctx: Plugin.Context, { pending, known }: Registry = registr
       yield* ctx.session.remove({ sessionID: session.id }).pipe(Effect.ignore);
     }));
     const started = call.started;
-    if (started) {
-      // Only while this call runs, and only for its provider: OpenCode wraps every request to a
-      // provider that has HTTP hooks.
-      yield* ctx.session.hook("http.response", (event) =>
-        event.sessionID === session.id ? Deferred.succeed(started, undefined).pipe(Effect.asVoid) : Effect.void,
-      { providerID: call.model.providerID });
+    // Only while this call runs, and only for its provider: OpenCode wraps every request to a
+    // provider that has HTTP hooks.
+    const scope = { providerID: call.model.providerID };
+    // Tools ride along only so the call shares the chat's cache; OpenCode's generate returns text
+    // alone, so a tool call would come back empty. Forbid tool use in the provider's own terms.
+    if (call.tools.length > 0) {
+      yield* ctx.session.hook("http.request", (event) => event.sessionID !== session.id ? Effect.void : Effect.promise(() => withoutToolUse(event.request)).pipe(
+        Effect.map((request) => { event.request = request; }),
+      ), scope);
     }
+    let stream: Promise<string> | undefined;
+    let status = 0;
+    yield* ctx.session.hook("http.response", (event) => Effect.suspend(() => {
+      if (event.sessionID !== session.id) return Effect.void;
+      status = event.response.status;
+      // Kept to explain an empty answer: OpenCode's generate returns the text alone.
+      try { stream = streamTail(event.response.clone()); } catch { /* body already taken */ }
+      return started ? Deferred.succeed(started, undefined).pipe(Effect.asVoid) : Effect.void;
+    }), scope);
     // The placeholder names the call, so a request that went out unswapped is traceable in logs.
     const result = yield* ctx.session.generate({ sessionID: session.id, prompt: `UniiChat call ${session.id}` });
     // Fail closed: without the swap the model answered the placeholder, and its text is junk.
     if (!entry.applied) {
       return yield* Effect.fail(new TransportError({ message: `UniiChat call ${session.id} went out without its request: no UniiChat generate hook applied it` }));
+    }
+    if (result.text.trim() === "") {
+      const tail = stream ? yield* Effect.promise(() => Promise.race([stream!, new Promise<string>((done) => setTimeout(() => done(""), 2000))])) : "";
+      yield* Effect.logWarning(`UniiChat call ${session.id} (${call.model.providerID}/${call.model.id}) returned no text; HTTP ${status || "none"}; ${describeStream(tail)}`);
     }
     return result.text;
   }));
@@ -103,6 +119,67 @@ export function make(ctx: Plugin.Context, { pending, known }: Registry = registr
 }
 
 export type Transport = ReturnType<typeof make>;
+
+/**
+ * The request with tool use forbidden, for the APIs whose shape is known: Anthropic Messages,
+ * OpenAI Responses and Chat Completions, Gemini. Anything else goes out unchanged.
+ */
+export async function withoutToolUse(request: Request): Promise<Request> {
+  if (request.method !== "POST") return request;
+  let body: Record<string, unknown>;
+  try {
+    const parsed: unknown = JSON.parse(await request.clone().text());
+    if (!parsed || typeof parsed !== "object" || Array.isArray(parsed)) return request;
+    body = parsed as Record<string, unknown>;
+  } catch {
+    return request;
+  }
+  if (body.tools === undefined) return request;
+  const path = new URL(request.url).pathname;
+  if (path.endsWith("/messages")) body.tool_choice = { type: "none" };
+  else if (path.endsWith("/responses") || path.endsWith("/chat/completions")) body.tool_choice = "none";
+  else if (/:(stream)?generateContent$/i.test(path)) {
+    delete body.tool_config;
+    body.toolConfig = { functionCallingConfig: { mode: "NONE" } };
+  } else return request;
+  const headers = new Headers(request.headers);
+  headers.delete("content-length");
+  return new Request(request.url, { method: "POST", headers, body: JSON.stringify(body), signal: request.signal });
+}
+
+const TAIL = 64_000;
+
+/** The last part of a response body, read beside OpenCode's own reading of it; "" if it fails. */
+export async function streamTail(response: Response): Promise<string> {
+  if (!response.body) return "";
+  const reader = response.body.getReader();
+  const decoder = new TextDecoder();
+  let tail = "";
+  try {
+    for (;;) {
+      const { done, value } = await reader.read();
+      if (done) break;
+      tail = (tail + decoder.decode(value, { stream: true })).slice(-TAIL);
+    }
+  } catch {
+    // The call was interrupted; keep what arrived.
+  }
+  return tail;
+}
+
+/** What a response body says about why it ended and what it held, for a log line. */
+export function describeStream(body: string): string {
+  if (body === "") return "response body unavailable";
+  const count = (pattern: RegExp) => {
+    const seen = new Map<string, number>();
+    for (const match of body.matchAll(pattern)) seen.set(match[1]!, (seen.get(match[1]!) ?? 0) + 1);
+    return [...seen].map(([key, n]) => `${key}×${n}`).join(", ") || "none";
+  };
+  const ends = count(/"(?:stop_reason|finish_reason|finishReason|status)"\s*:\s*"([A-Za-z_]+)"/g);
+  const items = count(/"type"\s*:\s*"(function_call|tool_use|tool_call|custom_tool_call|message|output_text|text|reasoning|thinking|refusal)"/g);
+  const tools = count(/"(?:type)"\s*:\s*"(?:function_call|tool_use|custom_tool_call)"[^}]*?"name"\s*:\s*"([^"]+)"/g);
+  return `ends: ${ends}; items: ${items}; tool calls: ${tools}`;
+}
 
 /** One user message of text parts, with cache marks where asked. */
 export function userMessage(parts: ReadonlyArray<{ text: string; cache?: boolean }>) {
