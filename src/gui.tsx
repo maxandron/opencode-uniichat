@@ -127,7 +127,7 @@ function Memory(props: { session: MountedSession }) {
       <Show when={s().chat && ((s().chat!.inFlight + s().chat!.pending) > 0)}><p class="unii-muted">Compacting memory · {s().chat!.inFlight} active · {s().chat!.pending} queued</p></Show>
       <Show when={s().plugin.update}>{(version) => <p class="unii-notice" role="status"><strong>UniiChat v{version()} is available.</strong> Run <code>opencode plugin update</code>, then restart OpenCode.</p>}</Show>
       <Show when={s().chat?.damaged}>{(count) => <div class="unii-notice unii-warn" role="status">
-        <p><strong>{count().toLocaleString()} damaged summaries.</strong> They are placeholders or clipped copies from a compaction bug fixed in v0.2.4; repairing rebuilds them from the intact log.</p>
+        <p><strong>{count().toLocaleString()} damaged summaries.</strong> They are placeholders from a compaction bug fixed in v0.2.4, or clipped copies saved when the model returned no text; repairing rebuilds them from the intact log.</p>
         <ui.Button size="small" busy={busy()} onClick={() => void repair()}>Repair</ui.Button>
       </div>}</Show>
       <Show when={repaired()}>{(text) => <p class="unii-muted" role="status">{text()}</p>}</Show>

@@ -3,7 +3,8 @@ import { mkdtempSync, readdirSync, readFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { Deferred, Effect, Fiber } from "effect";
-import { Chat, type Item } from "./chat.ts";
+import { TestClock } from "effect/testing";
+import { CLIPPED_RETRY, Chat, type Item } from "./chat.ts";
 import { DAMAGE_SINCE, damaged, isGreeting, type Node } from "./repair.ts";
 import { Store } from "./store.ts";
 
@@ -96,4 +97,57 @@ test("repair waits for summaries in flight instead of refusing", async () => {
     yield* chat.awaitSummarized();
     expect(yield* chat.damaged()).toBe(0);
   }));
+});
+
+test("a clipped fallback is rebuilt by an automatic repair a while later", async () => {
+  const dir = mkdtempSync(join(tmpdir(), "uniichat-repair-"));
+  let calls = 0;
+  let reply: () => string | undefined = () => undefined;
+  const chat = await Effect.runPromise(Chat.open(dir, {
+    compact: () => Effect.sync(() => (calls++, { text: reply(), ms: 1 })),
+  }));
+  const text = () => chat.renderView().tail + chat.renderView().blocks.join("");
+  await Effect.runPromise(Effect.gen(function* () {
+    yield* chat.setSystem("system");
+    yield* chat.setTools([]);
+    yield* chat.log([{ kind: "user", text: "message ".repeat(80), date: 1793433900000, src: "msg_0" }]);
+    yield* chat.awaitSummarized();
+    expect(calls).toBe(1);
+    expect(yield* chat.damaged()).toBe(1);
+
+    reply = () => "user: rebuilt";
+    yield* TestClock.adjust(CLIPPED_RETRY.afterMs - 1);
+    for (let i = 0; i < 50; i++) yield* Effect.yieldNow;
+    expect(calls).toBe(1);
+    yield* TestClock.adjust(1);
+    for (let i = 0; i < 50; i++) yield* Effect.yieldNow;
+    yield* chat.awaitSummarized();
+    expect(calls).toBe(2);
+    expect(yield* chat.damaged()).toBe(0);
+    expect(text()).toContain("user: rebuilt");
+  }).pipe(Effect.provide(TestClock.layer())));
+});
+
+test("a node that keeps returning no text is retried with doubling delays, then left for /unii repair", async () => {
+  const dir = mkdtempSync(join(tmpdir(), "uniichat-repair-"));
+  let calls = 0;
+  const chat = await Effect.runPromise(Chat.open(dir, {
+    compact: () => Effect.sync(() => (calls++, { text: undefined, ms: 1 })),
+  }));
+  await Effect.runPromise(Effect.gen(function* () {
+    yield* chat.setSystem("system");
+    yield* chat.setTools([]);
+    yield* chat.log([{ kind: "user", text: "message ".repeat(80), date: 1793433900000, src: "msg_0" }]);
+    yield* chat.awaitSummarized();
+    for (let retry = 0; retry < CLIPPED_RETRY.times; retry++) {
+      yield* TestClock.adjust(CLIPPED_RETRY.afterMs * 2 ** retry);
+      for (let i = 0; i < 50; i++) yield* Effect.yieldNow;
+      yield* chat.awaitSummarized();
+      expect(calls).toBe(retry + 2);
+    }
+    yield* TestClock.adjust(CLIPPED_RETRY.afterMs * 2 ** 10);
+    for (let i = 0; i < 50; i++) yield* Effect.yieldNow;
+    expect(calls).toBe(CLIPPED_RETRY.times + 1);
+    expect(yield* chat.damaged()).toBe(1);
+  }).pipe(Effect.provide(TestClock.layer())));
 });

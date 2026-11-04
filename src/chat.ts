@@ -31,6 +31,9 @@ const emptyUsage = (): Usage => ({ calls: 0, ms: 0 });
 // A compaction call that hangs (no response, stalled stream) must not block awaitSummarized forever.
 // `tries` bounds the recipe's "Too long" loop. Both are set from the plugin options.
 export const COMPACTION = { timeoutMs: 4 * 60_000, tries: 5 };
+// A summary saved as its clipped source (the model returned no text) is rebuilt by an automatic
+// repair `afterMs` later, doubling per retry of the same node, at most `times` times (ADR-0069).
+export const CLIPPED_RETRY = { afterMs: 60_000, times: 3 };
 const key = (ref: tree.Ref) => `${ref[0]}:${ref[1]}`;
 function extension(mime: string): string {
   const type = mime.split(";")[0]!.trim().toLowerCase();
@@ -67,6 +70,10 @@ export class Chat {
   private closed = false;
   /** `/unii repair` is waiting for in-flight builds to land: start no new ones. */
   private holding = false;
+  // Clipped fallbacks (see `compact`) waiting to be saved, and how often each node fell back.
+  private readonly fellBack = new Set<string>();
+  private readonly fallbacks = new Map<string, number>();
+  private retryScheduled = false;
   private readonly lookup: view.Lookup = (l, i) => this.texts.get(key([l, i]));
 
   private constructor(private readonly store: Store, private readonly deps: Deps, loaded: Loaded) {
@@ -321,8 +328,10 @@ export class Chat {
             if (shortest !== undefined) return shortest;
             // The model answered with no line (a refusal, or thinking used the whole output limit; tool
             // calls are forbidden, ADR-0067). The transport logs how the response ended.
-            // Asking again fails alike, so the node becomes its source clipped and the chat goes on.
+            // Asking again at once fails alike, so the node becomes its source clipped and the chat goes
+            // on; `retryClipped` rebuilds it a while later.
             yield* Effect.logWarning(`UniiChat compaction of ${tree.name(...ref)} returned no text; using its source clipped`);
+            self.fellBack.add(key(ref));
             return self.clippedSource(ref);
           }
           if (shortest === undefined || record.utf8Size(line) < record.utf8Size(shortest)) shortest = line;
@@ -346,6 +355,7 @@ export class Chat {
       const retained = self.unpersisted.get(key(ref));
       const result = yield* (retained ? Effect.succeed(retained.text) : self.compact(ref)).pipe(Effect.exit);
       yield* self.mutex.withPermits(1)(Effect.gen(function* () {
+        const fellBack = self.fellBack.delete(key(ref));
         // The newer copy that took the chat over builds this node again.
         if (self.closed) return;
         if (self.cuts.slice(epoch).some((k) => tree.last(...ref) >= k)) {
@@ -359,6 +369,7 @@ export class Chat {
           self.refreshSizes();
           // A retried node succeeded: the error no longer describes the chat's state.
           if (self.queue.failedNodes.size === 0) self.lastError = undefined;
+          if (fellBack) yield* self.retryClipped(ref);
         } else {
           self.queue.failed(ref);
           self.lastError = Cause.pretty(saved.cause);
@@ -371,6 +382,36 @@ export class Chat {
       self.lastError = Cause.pretty(cause);
       yield* self.notify();
     })), Effect.uninterruptible);
+  }
+
+  // A clipped fallback was saved for `ref`: repair the chat a while later, which drops it and the
+  // merges above it and builds them again. The caller holds the mutex.
+  private retryClipped(ref: tree.Ref) {
+    const self = this;
+    return Effect.gen(function* () {
+      const count = (self.fallbacks.get(key(ref)) ?? 0) + 1;
+      self.fallbacks.set(key(ref), count);
+      if (count > CLIPPED_RETRY.times) {
+        yield* Effect.logWarning(`UniiChat compaction of ${tree.name(...ref)} returned no text ${count} times; leaving it clipped for /unii repair`);
+        // Rescan, so the status shows it as damage again.
+        self.damage = undefined;
+        return;
+      }
+      if (self.retryScheduled) return;
+      self.retryScheduled = true;
+      const delay = CLIPPED_RETRY.afterMs * 2 ** (count - 1);
+      yield* Effect.logInfo(`UniiChat will rebuild the clipped summary ${tree.name(...ref)} in ${delay / 1000}s`);
+      yield* Effect.forkDetach(Effect.sleep(delay).pipe(
+        Effect.andThen(Effect.suspend(() => {
+          // Fallbacks saved from here on schedule the next retry.
+          self.retryScheduled = false;
+          return self.closed ? Effect.void : self.repair().pipe(Effect.flatMap((result) => result.dropped
+            ? Effect.logInfo(`UniiChat rebuilding ${result.dropped} clipped or damaged summaries (archived to ${result.archive})`)
+            : Effect.void));
+        })),
+        Effect.catchCause((cause) => self.closed ? Effect.void : Effect.logWarning("UniiChat automatic repair failed", cause)),
+      ));
+    });
   }
 
   // The first record whose message is gone from the session after an undo (the log tail whose

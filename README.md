@@ -45,6 +45,7 @@ Or add it by hand. The server part goes in `opencode.json(c)` and the terminal U
 - `/unii off` returns the session to vanilla OpenCode. Memory is kept, and `/unii on` resumes it.
 - `/unii` opens the memory popup. It shows the status and the live view. Up/Down move, Enter or a click zooms into a line, and Esc goes back and then closes.
 - `/unii repair` rebuilds summaries damaged by a compaction bug (v0.2.3 and earlier with OpenCode 2.2): placeholder greetings ("What would you like me to do with UniiChat?") and clipped copies saved in place of a summary, plus the merges above them. They move to `repaired/<time>/tree.jsonl` in the chat's folder and are built again from the log, which the bug never touched. This costs a compaction call per summary, and the next prompt waits until the dropped messages are summarized again. The popup and sidebar show how many a session has.
+- When the model returns no text for a summary, UniiChat saves its source clipped and repairs it on its own a minute later, then after 2 and 4 minutes if it fails again. Only a summary that still fails after that counts for `/unii repair`.
 - The sidebar shows whether UniiChat is on, `· compaction error (/unii)` when a compaction failed, `· N to repair (/unii repair)`, and `· vX available` when there is an update. The popup shows the details.
 
 The system prompt (with AGENTS.md, the skills list and the Code Mode catalog) is frozen at `/unii on`. To pick up edits, run `/unii off` and then `/unii on`.

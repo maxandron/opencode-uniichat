@@ -264,7 +264,7 @@ test("a failed first try retries at the next new record", async () => {
   }));
 });
 
-test("a no-text reply makes the node its source clipped, with no retry", async () => {
+test("a no-text reply makes the node its source clipped, with no immediate retry", async () => {
   const dir = temp();
   let calls = 0;
   const chat = await run(Chat.open(dir, deps(() => Effect.sync(() => (calls++, output(undefined))))));
