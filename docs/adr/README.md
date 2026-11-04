@@ -76,4 +76,5 @@ A new decision gets the next number; a changed decision gets a new record, and t
 | [0066](0066-update-notice.md) | Show the version and a newer one, but do not update | Accepted |
 | [0067](0067-calls-forbid-tool-use.md) | UniiChat's calls forbid tool use | Accepted |
 | [0068](0068-newest-copy-owns-each-chat.md) | The newest copy of the plugin owns each chat | Accepted |
-| [0069](0069-clipped-summaries-retry-later.md) | A clipped summary is rebuilt automatically a while later | Accepted |
+| [0069](0069-clipped-summaries-retry-later.md) | A clipped summary is rebuilt automatically a while later | Superseded by [0070](0070-no-text-retried-like-an-error.md) |
+| [0070](0070-no-text-retried-like-an-error.md) | A no-text reply is retried like an error | Accepted |

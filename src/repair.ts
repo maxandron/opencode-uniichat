@@ -6,7 +6,7 @@ import * as tree from "./tree.ts";
 // the node became its source clipped. Both were saved as summaries. They are dropped and built
 // again from the log, which the bug never touched.
 // The same scan also finds clipped fallbacks saved since, when a model returned no text; each
-// is repaired automatically a while later (chat.ts `retryClipped`, ADR-0069).
+// is saved only after `compaction.tries` empty replies (ADR-0070).
 
 /** Tree files written before this day cannot hold the damage (OpenCode 2.2 shipped Oct 28, 2026). */
 export const DAMAGE_SINCE = "2026-10-28";

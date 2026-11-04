@@ -14,7 +14,7 @@ const status = z.object({
     T: z.number(), viewBytes: z.number(), compViewBytes: z.number(), lines: z.number(),
     inFlight: z.number(), pending: z.number(), failed: z.number(),
     lastError: z.string().optional(), last: compaction.optional(), total: totals,
-    /** Summaries `/unii repair` would rebuild: damage from the bug fixed in v0.2.4, or clipped fallbacks whose automatic retries ran out (ADR-0069). */
+    /** Summaries `/unii repair` would rebuild: damage from the bug fixed in v0.2.4, or clipped fallbacks whose retries ran out (ADR-0070). */
     damaged: z.number(),
   }).nullable(),
   lastTurn: usage.extend({ ms: z.number().optional() }).nullable(),

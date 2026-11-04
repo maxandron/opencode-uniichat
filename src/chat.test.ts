@@ -264,15 +264,45 @@ test("a failed first try retries at the next new record", async () => {
   }));
 });
 
-test("a no-text reply makes the node its source clipped, with no immediate retry", async () => {
+test("a no-text reply is retried like an error, with the same backoff", async () => {
+  await run(Effect.gen(function* () {
+    let calls = 0;
+    const chat = yield* Chat.open(temp(), deps(() => Effect.sync(() => ++calls < 3 ? output(undefined) : output("summary"))));
+    yield* ready(chat);
+    yield* chat.log([item(0, "L".repeat(600))]);
+    yield* flush;
+    expect(chat.status().failed).toBe(1);
+    expect(chat.status().lastError).toContain("returned no text (1 of 5)");
+    const wait = yield* Effect.forkChild(chat.awaitSummarized());
+    yield* flush;
+    yield* TestClock.adjust(1000);
+    yield* flush;
+    expect(calls).toBe(2);
+    yield* TestClock.adjust(2000);
+    yield* Fiber.join(wait);
+    expect(calls).toBe(3);
+    expect(chat.status().failed).toBe(0);
+    expect(chat.renderView().tail + chat.renderView().blocks.join("")).toContain("summary");
+  }).pipe(Effect.provide(TestClock.layer())));
+});
+
+test("after `tries` no-text replies the node is its source clipped, so a refusal never blocks the chat", async () => {
   const dir = temp();
   let calls = 0;
-  const chat = await run(Chat.open(dir, deps(() => Effect.sync(() => (calls++, output(undefined))))));
-  await run(ready(chat));
-  await run(chat.log([item(0, "L".repeat(300) + "\n" + "M".repeat(300))]));
-  await run(chat.awaitSummarized());
-  expect(calls).toBe(1);
-  expect(chat.status().failed).toBe(0);
+  await run(Effect.gen(function* () {
+    const chat = yield* Chat.open(dir, deps(() => Effect.sync(() => (calls++, output(undefined)))));
+    yield* ready(chat);
+    yield* chat.log([item(0, "L".repeat(300) + "\n" + "M".repeat(300))]);
+    yield* flush;
+    const wait = yield* Effect.forkChild(chat.awaitSummarized());
+    for (let i = 0; i < COMPACTION.tries; i++) {
+      yield* flush;
+      yield* TestClock.adjust(30_000);
+    }
+    yield* Fiber.join(wait);
+    expect(calls).toBe(COMPACTION.tries);
+    expect(chat.status().failed).toBe(0);
+  }).pipe(Effect.provide(TestClock.layer())));
   const text = (await run(load(dir))).nodes[0]!.text;
   expect(text).toBe(`user: ${"L".repeat(300)} ${"M".repeat(300)}`.slice(0, 512));
 });

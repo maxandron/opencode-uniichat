@@ -45,7 +45,7 @@ Or add it by hand. The server part goes in `opencode.json(c)` and the terminal U
 - `/unii off` returns the session to vanilla OpenCode. Memory is kept, and `/unii on` resumes it.
 - `/unii` opens the memory popup. It shows the status and the live view. Up/Down move, Enter or a click zooms into a line, and Esc goes back and then closes.
 - `/unii repair` rebuilds summaries damaged by a compaction bug (v0.2.3 and earlier with OpenCode 2.2): placeholder greetings ("What would you like me to do with UniiChat?") and clipped copies saved in place of a summary, plus the merges above them. They move to `repaired/<time>/tree.jsonl` in the chat's folder and are built again from the log, which the bug never touched. This costs a compaction call per summary, and the next prompt waits until the dropped messages are summarized again. The popup and sidebar show how many a session has.
-- When the model returns no text for a summary, UniiChat saves its source clipped and repairs it on its own a minute later, then after 2 and 4 minutes if it fails again. Only a summary that still fails after that counts for `/unii repair`.
+- When the model returns no text for a summary, UniiChat retries it like a failed call. Only after `compaction.tries` empty replies does it save the source clipped, which then counts for `/unii repair`.
 - The sidebar shows whether UniiChat is on, `· compaction error (/unii)` when a compaction failed, `· N to repair (/unii repair)`, and `· vX available` when there is an update. The popup shows the details.
 
 The system prompt (with AGENTS.md, the skills list and the Code Mode catalog) is frozen at `/unii on`. To pick up edits, run `/unii off` and then `/unii on`.
@@ -85,7 +85,7 @@ Default configuration (`opencode.jsonc`):
           "providerOptions": {},
           // Fail and retry calls that exceed this duration, in milliseconds.
           "timeoutMs": 240000,
-          // Maximum attempts per node in the "Too long" retry loop.
+          // Maximum attempts per node in the "Too long" retry loop, and empty replies before a node uses its source clipped.
           "tries": 5,
           // Maximum simultaneous compaction calls.
           "concurrency": 8
@@ -164,7 +164,7 @@ These are additions the recipe does not cover:
 
 Victor has since released his code, [VictorTaelin/UniiChat](https://github.com/VictorTaelin/UniiChat). These follow that code where it differs from the recipe:
 
-- a compaction that returns no text uses its source clipped to 512 bytes ([0056](docs/adr/0056-no-text-clips-the-source.md))
+- a compaction that returns no text is retried like an error, and after `tries` empty replies uses its source clipped to 512 bytes ([0070](docs/adr/0070-no-text-retried-like-an-error.md), [0056](docs/adr/0056-no-text-clips-the-source.md))
 - the "fast and small" paragraph at the end of the system prompt ([0057](docs/adr/0057-compaction-prompt-fast-and-small.md))
 - "Too long" retries resend the first request with one note ([0058](docs/adr/0058-too-long-retry-single-note.md))
 - failed and stopped turns leave a `note` in memory ([0059](docs/adr/0059-failed-turns-leave-a-note.md))
