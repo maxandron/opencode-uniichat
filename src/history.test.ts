@@ -146,9 +146,9 @@ describe("context request", () => {
     const output = request([original]);
     expect(texts(output[0]!)).toEqual(["<chat>\n0+1|old\n1+1|old\n2+1|old\n3+1|old\n", "</chat>", "state", "task"]);
     expect(marked(output)).toHaveLength(2);
-    const normalized = Message.make(output[0]!);
+    const normalized = Message.make(output[0]! as Message.Input);
     expect(normalized.id).toBe("msg_new");
-    expect(normalized.content).toEqual(output[0]!.content);
+    expect(normalized.content).toEqual(output[0]!.content as typeof normalized.content);
   });
 
   test("assistant-first inserts a user prefix and end mark skips reasoning", () => {

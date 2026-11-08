@@ -1,6 +1,6 @@
 import type { Schema } from "effect";
 import type { SessionMessage } from "@opencode/schema/session-message";
-import type { ContentPart, Message, SystemPart } from "@opencode/ai/effect";
+import type { ContentPart, Message, ProviderMetadata, SystemPart } from "@opencode/ai/effect";
 import { failureNote } from "./prompts.ts";
 import { echoText, toolResultSrc, toolText, type Kind } from "./record.ts";
 
@@ -17,7 +17,13 @@ export interface Item {
   src: string;
   files?: { name: string; mime: string; data?: Uint8Array }[];
 }
-export type RequestMessage = Pick<Message, "id" | "role" | "content" | "metadata" | "providerMetadata" | "native">;
+// Any role's message, loosely: since @opencode/ai 2.2.6 each role is its own class with its own parts.
+export interface RequestMessage {
+  readonly id?: string;
+  readonly role: Message["role"];
+  readonly content: readonly ContentPart[];
+  readonly providerMetadata?: ProviderMetadata;
+}
 export interface RequestInput {
   messages: readonly RequestMessage[];
   turnIds: ReadonlySet<string>;

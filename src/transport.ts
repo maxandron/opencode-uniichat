@@ -183,12 +183,12 @@ export function describeStream(body: string): string {
 
 /** One user message of text parts, with cache marks where asked. */
 export function userMessage(parts: ReadonlyArray<{ text: string; cache?: boolean }>) {
-  return new Message({
+  return Message.make({
     role: "user",
     content: parts.map((part) => ({ type: "text" as const, text: part.text, ...(part.cache ? { cache: { type: "ephemeral" as const } } : {}) })),
   });
 }
 
 export function textMessage(role: "user" | "assistant", parts: ReadonlyArray<{ text: string; cache?: boolean }>) {
-  return role === "user" ? userMessage(parts) : new Message({ role, content: parts.map((part) => ({ type: "text" as const, text: part.text })) });
+  return role === "user" ? userMessage(parts) : Message.make({ role, content: parts.map((part) => ({ type: "text" as const, text: part.text })) });
 }

@@ -3,7 +3,7 @@
 // plugins cannot import. Native provider checkpoints are left out: a turn cut by one still fails.
 import { Media, Message, ReasoningEfforts, ToolCallPart, ToolResultPart, type ContentPart, type ProviderMetadata } from "@opencode/ai/effect";
 import { fileURLToPath } from "node:url";
-import type { Row } from "./history.ts";
+import type { RequestMessage, Row } from "./history.ts";
 
 type UserRow = Extract<Row, { type: "user" }>;
 type File = NonNullable<UserRow["files"]>[number];
@@ -28,7 +28,6 @@ const attached = (file: File, label: string, name: string | undefined, body: str
     body === undefined ? undefined : "",
     body,
   ].filter((line): line is string => line !== undefined).join("\n")}`,
-  metadata: { attachment: { source: file.source, name: file.name, description: file.description } },
 });
 
 const attachment = (file: File): ContentPart[] => {
@@ -45,7 +44,6 @@ const attachment = (file: File): ContentPart[] => {
       type: "media",
       media: Media.base64(file.data, file.mime),
       filename: file.name,
-      metadata: file.description === undefined ? undefined : { description: file.description },
     } as ContentPart;
     return [...(at === undefined ? [] : [Message.text(`Attached file: ${at}`)]), media];
   }
@@ -135,7 +133,7 @@ const assistant = (message: AssistantRow, model: ModelRef, key: string): Message
     .filter((part) => part !== undefined)
     .map((part) => Message.tool(part));
   if (meaningful.length === 0) return results;
-  return [Message.make({ id: message.id, role: "assistant", content: meaningful, metadata: message.metadata }), ...results];
+  return [Message.make({ id: message.id, role: "assistant", content: meaningful as Message.AssistantInput["content"] }), ...results];
 };
 
 const efforts = new Set<string>(ReasoningEfforts);
@@ -156,7 +154,7 @@ function toMessage(row: Row, model: ModelRef, key: string): Message[] {
       return [Message.effort({ effort: to.effort, previous: from.effort })];
     }
     case "location-switched":
-      return [Message.make({ id: row.id, role: "user", content: `The working directory has been changed to ${row.location.directory}.`, metadata: row.metadata })];
+      return [Message.make({ id: row.id, role: "user", content: `The working directory has been changed to ${row.location.directory}.` })];
     case "user": {
       const content = [
         ...(row.skills ?? []).flatMap((skill) => skill.text === undefined ? [] : [Message.text(skill.text)]),
@@ -164,12 +162,12 @@ function toMessage(row: Row, model: ModelRef, key: string): Message[] {
         ...attachments(row.files ?? []),
       ];
       if (content.length === 0) return [];
-      return [Message.make({ id: row.id, role: "user", content, metadata: { ...row.metadata, ...(row.agents?.length ? { agents: row.agents } : {}) } })];
+      return [Message.make({ id: row.id, role: "user", content: content as Message.UserInput["content"] })];
     }
     case "synthetic":
       return [Message.make({ id: row.id, role: "user", content: row.text })];
     case "skill":
-      return [Message.make({ id: row.id, role: "user", content: row.text, metadata: row.metadata })];
+      return [Message.make({ id: row.id, role: "user", content: row.text })];
     case "system":
       return [Message.system(row.text)];
     case "shell":
@@ -178,7 +176,6 @@ function toMessage(row: Row, model: ModelRef, key: string): Message[] {
         id: row.id,
         role: "user",
         content: `The following shell command was executed by the user:\n\nCommand:\n${row.command}\n\nOutput:\n${row.output?.output ?? ""}`,
-        metadata: row.metadata,
       })];
     case "assistant":
       return assistant(row, model, key);
@@ -193,32 +190,39 @@ export function toMessages(rows: readonly Row[], model: ModelRef, key: string = 
   return rows.flatMap((row) => toMessage(row, model, key));
 }
 
-type Make = (input: Pick<Message, "role" | "content"> & Partial<Pick<Message, "id" | "metadata" | "providerMetadata" | "native">>) => Message;
 type AssetClass = new (input: { source: Media.Asset["source"]; info?: Media.Asset["info"]; providerMetadata?: Media.Asset["providerMetadata"]; headers?: Media.Asset["headers"] }) => Media.Asset;
+type MessageClass = new (input: RequestMessage) => Message;
 
 /**
  * Builds request messages with the classes of the `@opencode/ai` copy OpenCode itself runs, taken from the
- * messages it handed over. The plugin ships its own copy, and `Message` checks `media` with `instanceof
- * Media.Asset`: an attachment OpenCode made fails the plugin's `Message.make`, and one the plugin made could
- * fail OpenCode's. Each attachment is moved to the class of the copy that builds its message.
+ * messages it handed over. The plugin ships its own copy, and OpenCode checks messages and attachments with
+ * `instanceof`: one the plugin's copy made can fail OpenCode's check. Since 2.2.6 each role is its own
+ * class, so the class is learned per role; a role OpenCode sent none of falls back to the plugin's copy.
+ * Each attachment is moved to the asset class of the copy that builds its message.
  */
-export function hostMessages(host: readonly Message[]): (input: Parameters<Make>[0]) => Message {
-  const own = { make: Message.make as Make, Asset: Media.Asset as AssetClass };
-  const found = host.find((message) => typeof (message?.constructor as { make?: unknown } | undefined)?.make === "function");
-  const make = found ? (found.constructor as unknown as { make: Make }).make : own.make;
-  const media = host.flatMap((message) => message.content).find((part) => part.type === "media");
-  const hostAsset = media && media.type === "media" ? media.media.constructor as AssetClass : undefined;
-  const adopt = (input: Parameters<Make>[0], Asset: AssetClass): Parameters<Make>[0] => ({
+export function hostMessages(host: readonly Message[]): (input: RequestMessage) => Message {
+  const classes = new Map<string, MessageClass>();
+  for (const message of host) {
+    const Class = message?.constructor;
+    if (typeof Class === "function" && Class !== Object && !classes.has(message.role)) classes.set(message.role, Class as unknown as MessageClass);
+  }
+  const media = host.flatMap((message) => message.content as readonly ContentPart[]).find((part) => part.type === "media");
+  const hostAsset = media && media.type === "media" ? media.media.constructor as unknown as AssetClass : undefined;
+  const adopt = (input: RequestMessage, Asset: AssetClass): RequestMessage => ({
     ...input,
-    content: Message.content(input.content).map((part) => part.type !== "media" || part.media instanceof Asset ? part : {
-      ...part,
-      media: new Asset({ source: part.media.source, info: part.media.info, providerMetadata: part.media.providerMetadata, headers: part.media.headers }),
+    content: input.content.map((part) => {
+      if (part.type !== "media" || (part.media as unknown) instanceof Asset) return part;
+      const { source, info, providerMetadata, headers } = part.media as Media.Asset;
+      return { ...part, media: new Asset({ source, info, providerMetadata, headers }) };
     }),
   });
+  const own = (input: RequestMessage) => Message.make(adopt(input, Media.Asset as unknown as AssetClass) as Message.Input);
   return (input) => {
-    if (make === own.make) return own.make(adopt(input, own.Asset));
-    if (hostAsset) return make(adopt(input, hostAsset));
-    // OpenCode sent no attachment to learn its asset class from; one made here can only pass the plugin's own check.
-    try { return make(input); } catch { return own.make(adopt(input, own.Asset)); }
+    const Class = classes.get(input.role);
+    if (Class === undefined) return own(input);
+    if (input instanceof Class) return input as unknown as Message;
+    // No attachment from OpenCode to learn its asset class from: one made here can only pass the plugin's own check.
+    if (hostAsset) return new Class(adopt(input, hostAsset));
+    try { return new Class(input); } catch { return own(input); }
   };
 }
