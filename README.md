@@ -17,6 +17,7 @@ UniiChat is switched on per session and is off by default (opt-in via `/unii on`
 - Two tools are added: `zoom` (open archived memory) and `date`.
 - Subagents always run in the background, and their reports come back as `work` messages.
 - `/btw` answers from Unii's memory instead of the full transcript.
+- A fork of the session starts with its memory up to the fork point, with no recompaction ([0071](docs/adr/0071-forks-take-over-memory.md)).
 
 Memory is stored under `<OpenCode data dir>/uniichat/<sessionID>/`, normally `~/.local/share/opencode/uniichat/`, in the recipe's file layout.
 

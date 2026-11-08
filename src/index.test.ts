@@ -63,6 +63,8 @@ function fixture(initial: Row[], on = true) {
     status: () => ({ T: 0, viewBytes: 0, compViewBytes: 0, lines: 0, inFlight: 0, pending: 0, failed: 0, lastError: undefined, last: undefined, total: { calls: 0, ms: 0 } }),
     damaged: () => Effect.succeed(0),
     repair: () => Effect.succeed({ dropped: 0, leaves: 0, archive: undefined }),
+    size: () => 0,
+    forkCopy: () => Effect.succeed({ keep: 0, unmatched: undefined }),
   };
   let contextReads = 0;
   const childID = Session.ID.make(`${sessionID}_child`);

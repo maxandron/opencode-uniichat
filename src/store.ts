@@ -31,6 +31,38 @@ export interface Loaded {
   tornLines: TornLine[];
 }
 
+/** What a fork keeps of its source's store; see Store.copyTo. */
+export interface ForkCopy {
+  keep: number;
+  rename: (base: string) => string | undefined;
+  agents: readonly string[];
+  chat: readonly Ref[];
+  comp: readonly Ref[];
+}
+
+/** A staging directory next to `dir`, for a fork's store (see Store.copyTo, publishFork). */
+export const stagingDir = (dir: string): string => join(dirname(dir), `.staging-${randomUUID()}`);
+
+/**
+ * Move a fork's staged store into place as one rename. A store already at `dest` may hold only empty
+ * logs (a chat opened before the fork was checked); a store with records is never replaced.
+ */
+export function publishFork(staging: string, dest: string): Effect.Effect<void, StoreError> {
+  return attempt("publishFork", dest, () => {
+    if (fs.existsSync(dest)) {
+      const main = join(dest, "main");
+      if (fs.existsSync(main) && fs.readdirSync(main).some((file) => fs.statSync(join(main, file)).size > 0)) throw new Error("the fork already has memory");
+      fs.rmSync(dest, { recursive: true, force: true });
+    }
+    fs.renameSync(staging, dest);
+    syncDir(dirname(dest));
+  });
+}
+
+export function removeStaging(staging: string): Effect.Effect<void> {
+  return Effect.sync(() => fs.rmSync(staging, { recursive: true, force: true }));
+}
+
 export const chatDir = (sessionID: string): string => join(Path.data, "uniichat", sessionID);
 
 function attempt<A>(op: string, path: string, f: () => A): Effect.Effect<A, StoreError> {
@@ -282,6 +314,46 @@ export class Store {
       fs.mkdirSync(archive, { recursive: true });
       cutLines(join(this.dir, "tree"), join(archive, "tree.jsonl"), (node: StoredNode) => ids.has(`${node.l}:${node.i}`));
       return archive;
+    });
+  }
+
+  // A fork of the session (ADR-0071): write the fork's store to `dir`, a fresh staging directory,
+  // already cut at the fork point. Kept: records below `keep`, with each source message renamed by
+  // `rename` (the fork's copy of it); tree nodes that lie below `keep`; the cut views; the system
+  // prompt; the logs and attachments of the subagents in `agents` and the main attachments below
+  // `keep`. Archives (undone/, repaired/) stay behind. The caller holds the chat's mutex, so no
+  // record is half-written; summaries not yet written are rebuilt in the fork. See publishFork.
+  copyTo(dir: string, fork: ForkCopy): Effect.Effect<void, StoreError> {
+    return attempt("copyTo", dir, () => {
+      recoverSnapshot(this.dir);
+      if (fs.existsSync(dir)) throw new Error("staging directory exists");
+      for (const name of ["main", "tree", "agents", "files"]) fs.mkdirSync(join(dir, name), { recursive: true });
+      const torn: TornLine[] = [];
+      const days = (name: string) => fs.readdirSync(join(this.dir, name)).filter((s) => /^\d{4}-\d{2}-\d{2}\.jsonl$/.test(s));
+      const write = (path: string, values: readonly unknown[]) => { if (values.length) atomic(path, values.map((v) => `${JSON.stringify(v)}\n`).join("")); };
+      for (const file of days("main")) {
+        write(join(dir, "main", file), jsonl<LogRecord>(join(this.dir, "main", file), torn).filter((rec) => rec.i < fork.keep).map((rec) => {
+          const [base, ...rest] = rec.src.split(":");
+          const renamed = fork.rename(base!);
+          return renamed === undefined ? rec : { ...rec, src: [renamed, ...rest].join(":") };
+        }));
+      }
+      for (const file of days("tree")) {
+        write(join(dir, "tree", file), jsonl<StoredNode>(join(this.dir, "tree", file), torn).filter((node) => last(node.l, node.i) < fork.keep));
+      }
+      for (const name of fork.agents) {
+        safeName(name);
+        const path = join(this.dir, "agents", `${name}.jsonl`);
+        if (fs.existsSync(path)) fs.copyFileSync(path, join(dir, "agents", `${name}.jsonl`));
+      }
+      for (const file of fs.readdirSync(join(this.dir, "files"))) {
+        const main = /^(\d+)-\d+\.[^.]+$/.exec(file);
+        const keep = main ? Number(main[1]) < fork.keep : fork.agents.some((name) => file.startsWith(`${name}-`) && /^\d+-\d+\.[^.]+$/.test(file.slice(name.length + 1)));
+        if (keep) fs.copyFileSync(join(this.dir, "files", file), join(dir, "files", file));
+      }
+      const system = optional(join(this.dir, "system.txt"));
+      if (system !== undefined) atomic(join(dir, "system.txt"), system);
+      snapshot(dir, [JSON.stringify(fork.chat), JSON.stringify(fork.comp), JSON.stringify(serializeBatch(false, false))]);
     });
   }
 

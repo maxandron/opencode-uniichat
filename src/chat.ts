@@ -405,6 +405,40 @@ export class Chat {
     return undefined;
   }
 
+  /** Records logged so far. */
+  size() { return this.T; }
+
+  /**
+   * Stage a fork's copy of this chat in `dir` (ADR-0071): records up to the last one whose source
+   * the fork holds (`present`), renamed by `rename`. Every kept record must come from a message the
+   * fork holds, or its source could never be matched again (undo, import of earlier turns); otherwise
+   * nothing is written and the unmatched source is returned. Subagent logs go along when a kept
+   * record holds the agent's report.
+   */
+  forkCopy(dir: string, rename: ReadonlyMap<string, string>, present: ReadonlySet<string>) {
+    const self = this;
+    return this.mutex.withPermits(1)(Effect.gen(function* () {
+      yield* self.live();
+      let keep = 0;
+      for (let i = self.T - 1; i >= 0; i--) if (present.has(self.records.get(i)!.src.split(":")[0]!)) { keep = i + 1; break; }
+      const agents = new Set<string>();
+      for (let i = 0; i < keep; i++) {
+        const rec = self.records.get(i)!;
+        const base = rec.src.split(":")[0]!;
+        if (!present.has(base)) return { keep, unmatched: base };
+        const name = rec.kind === "work" ? /^\[([^\]]+)\]/.exec(rec.text)?.[1] : undefined;
+        if (name && self.agents.has(name)) agents.add(name);
+      }
+      if (keep > 0) {
+        yield* self.store.copyTo(dir, {
+          keep, rename: (base) => rename.get(base), agents: [...agents],
+          chat: view.cut(self.chat.lines, keep), comp: view.cut(self.comp.lines, keep),
+        });
+      }
+      return { keep, unmatched: undefined };
+    }));
+  }
+
   // Drop records [k, T) from the log, tree and views (OpenCode undo). Returns the dropped src bases.
   rewind(k: number) {
     const self = this;
@@ -662,6 +696,37 @@ const SHARED = Symbol.for("opencode-uniichat.chats.v1");
 const shared = (globalThis as { [SHARED]?: Shared })[SHARED] ??= { copies: 0, chats: new Map() };
 const COPY = ++shared.copies;
 const local = new Map<string, Deferred.Deferred<Chat, StoreError | ChatError>>();
+
+/**
+ * Replace the session's chat with a store published by `publish` (a fork taking over its source's
+ * memory, ADR-0071). The registry entry is reserved before anything else runs, so a concurrent `get`
+ * waits for the new chat instead of opening the old store; an open chat is closed first. If
+ * publishing fails, the entry is released and the next `get` opens the store as it is.
+ */
+export function replace(sessionID: string, deps: Deps, publish: Effect.Effect<void, StoreError>, dir = chatDir(sessionID)): Effect.Effect<Chat, StoreError | ChatError> {
+  return Effect.uninterruptibleMask((restore) => Effect.gen(function* () {
+    const entry = shared.chats.get(sessionID);
+    if (entry && entry.copy > COPY) {
+      return yield* Effect.fail(new ChatError({ message: `UniiChat was updated in this process; chat ${sessionID} is served by the newer copy.` }));
+    }
+    const loaded = Deferred.makeUnsafe<Chat, StoreError | ChatError>();
+    const mine: Entry = {
+      copy: COPY,
+      close: () => Effect.runPromise(Deferred.await(loaded).pipe(Effect.flatMap((chat) => chat.close()), Effect.ignore)),
+    };
+    local.set(sessionID, loaded);
+    shared.chats.set(sessionID, mine);
+    yield* Effect.forkDetach(Deferred.complete(loaded, Effect.gen(function* () {
+      if (entry) yield* Effect.promise(() => entry.close().catch(() => undefined));
+      yield* publish;
+      return yield* Chat.open(dir, deps);
+    }).pipe(Effect.tapError(() => Effect.sync(() => {
+      if (shared.chats.get(sessionID) === mine) shared.chats.delete(sessionID);
+      if (local.get(sessionID) === loaded) local.delete(sessionID);
+    })))));
+    return yield* restore(Deferred.await(loaded));
+  }));
+}
 
 export function get(sessionID: string, deps: Deps, dir = chatDir(sessionID)): Effect.Effect<Chat, StoreError | ChatError> {
   return Effect.uninterruptibleMask((restore) => Effect.gen(function* () {

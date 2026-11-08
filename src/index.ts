@@ -16,13 +16,14 @@ import * as env from "./env.ts";
 import * as history from "./history.ts";
 import * as turn from "./turn.ts";
 import { hostMessages, toMessages } from "./messages.ts";
-import { chatDir } from "./store.ts";
+import { chatDir, publishFork, removeStaging, stagingDir, type StoreError } from "./store.ts";
+import * as forks from "./fork.ts";
 import { btwMemory, lookupCalls, lookupResults, systemText, stateText, ZOOM_DESCRIPTION, DATE_DESCRIPTION } from "./prompts.ts";
 import { UniiChatRpc, statusValue } from "./rpc.ts";
 import * as updates from "./update.ts";
 
 export class IntegrationError extends Data.TaggedError("UniiChatIntegrationError")<{ message: string }> {}
-type Chat = Pick<engine.Chat, "log" | "logAgent" | "agentName" | "system" | "setSystem" | "setTools" | "awaitSummarized" | "renderView" | "zoom" | "date" | "status" | "latestSource" | "undoneFrom" | "rewind" | "damaged" | "repair">;
+type Chat = Pick<engine.Chat, "log" | "logAgent" | "agentName" | "system" | "setSystem" | "setTools" | "awaitSummarized" | "renderView" | "zoom" | "date" | "status" | "latestSource" | "undoneFrom" | "rewind" | "damaged" | "repair" | "size" | "forkCopy">;
 export interface IntegrationOptions {
   /** Plugin options; defaults to `ctx.options`. */
   options?: unknown;
@@ -31,11 +32,15 @@ export interface IntegrationOptions {
   get?: (sessionID: string, deps: engine.Deps) => Effect.Effect<Chat, unknown>;
   sources?: (sessionID: string) => Effect.Effect<Set<string>, unknown>;
   older?: (sessionID: string, has: (row: history.Row) => boolean) => Effect.Effect<readonly history.Row[] | undefined, unknown>;
+  /** Replaces a session's chat with a published store (tests); see engine.replace. */
+  replace?: (sessionID: string, publish: Effect.Effect<void, unknown>) => Effect.Effect<unknown, unknown>;
 }
 const memos = new Map<string, turn.Memo>();
 const parents = new Map<string, string | undefined>();
 const locks = new Map<string, Semaphore.Semaphore>();
 const indexes = new Map<string, { sources: Set<string>; recovered: boolean }>();
+// Sessions checked for a fork to take over (ADR-0071).
+const forkChecked = new Set<string>();
 const error = (cause: unknown) => new IntegrationError({ message: cause instanceof Error ? cause.message : String(cause) });
 const id = (sessionID: string) => Session.ID.make(sessionID);
 
@@ -140,6 +145,7 @@ export const integrate = (ctx: Plugin.Context, options: IntegrationOptions = {})
     }),
   });
   const get = (sessionID: string) => (options.get ?? engine.get)(sessionID, depsFor(sessionID));
+  const replaceChat = (sessionID: string, publish: Effect.Effect<void, unknown>) => engine.replace(sessionID, depsFor(sessionID), publish as Effect.Effect<void, StoreError>);
   const state = (sessionID: string) => ctx.storage.get(`session/${sessionID}`).pipe(Effect.map((value): turn.Switch => {
     // A session never switched follows the defaultOn option.
     if (!value || typeof value !== "object" || Array.isArray(value)) return settings.defaultOn ? { on: true, render: true } : { on: false };
@@ -265,7 +271,49 @@ export const integrate = (ctx: Plugin.Context, options: IntegrationOptions = {})
     if (index) for (const base of dropped) index.sources.delete(base);
     yield* Effect.logInfo(`UniiChat dropped records from ${k} on: their messages were undone`);
   });
+  // A fork of a UniiChat session starts with the source's memory up to the fork point, instead of
+  // recompacting the copied history (ADR-0071). The caller holds the fork's lock. `explicit`: the
+  // user switched UniiChat on in the fork; otherwise the fork follows the source's switch, unless the
+  // fork was switched already. A session is marked checked only once the question is settled, so a
+  // failed or unverifiable copy is tried again on the next turn.
+  const adoptFork = Effect.fn(function* (sessionID: string, explicit: boolean) {
+    if (forkChecked.has(sessionID) && !explicit) return;
+    const settle = (message?: string) => Effect.gen(function* () {
+      forkChecked.add(sessionID);
+      if (message) yield* Effect.logInfo(message);
+    });
+    const info = yield* ctx.session.get({ sessionID: id(sessionID) });
+    const origin = info.fork?.sessionID;
+    if (!origin || info.parentID || (yield* parent(origin))) return yield* settle();
+    if (!explicit && (yield* ctx.storage.get(`session/${sessionID}`))) return yield* settle();
+    if ((yield* (options.sources ?? sources)(sessionID).pipe(Effect.orElseSucceed(() => new Set<string>()))).size) return yield* settle();
+    const on = (yield* state(origin)).on;
+    if (!on && !explicit) return yield* settle();
+    const source = yield* get(origin);
+    if (source.size() === 0) return yield* settle();
+    // Pair from the full lists; without them, the contexts, which hold every message unless a
+    // checkpoint cut them (then the copy is refused below: some record has no match).
+    const rows = (sid: string) => (options.older ?? older)(sid, () => false).pipe(
+      Effect.catchCause(() => Effect.succeed(undefined)),
+      Effect.flatMap((full) => full ? Effect.succeed(full) : readHistory(sid)),
+    );
+    const { rename, present } = forks.pair(yield* rows(origin), yield* rows(sessionID));
+    const dest = chatDir(sessionID);
+    const staging = stagingDir(dest);
+    const copied = yield* source.forkCopy(staging, rename, present).pipe(Effect.onError(() => removeStaging(staging)));
+    if (copied.unmatched !== undefined) {
+      yield* removeStaging(staging);
+      return yield* Effect.logWarning(`UniiChat fork ${sessionID} of ${origin}: message ${copied.unmatched} has no copy in the fork's history; its memory is not copied yet`);
+    }
+    if (copied.keep > 0) {
+      indexes.delete(sessionID);
+      yield* (options.replace ?? replaceChat)(sessionID, publishFork(staging, dest).pipe(Effect.onError(() => removeStaging(staging))));
+    }
+    if (!explicit) yield* ctx.storage.set(`session/${sessionID}`, { on: true, render: true });
+    yield* settle(`UniiChat fork ${sessionID} took over the memory of ${origin}: ${copied.keep} of ${source.size()} records`);
+  }, (effect, sessionID) => effect.pipe(Effect.catchCause((cause) => Effect.logWarning(`UniiChat could not copy memory to fork ${sessionID}`, cause))));
   const set = (sessionID: string, on: boolean) => serialized(sessionID, Effect.gen(function* () {
+    if (on) yield* adoptFork(sessionID, true);
     const rows = on ? yield* readHistory(sessionID) : [];
     const memo = turn.switchMemo(on, history.turnKey(rows), rows, memos.get(sessionID));
     if (memo) memos.set(sessionID, memo);
@@ -277,6 +325,7 @@ export const integrate = (ctx: Plugin.Context, options: IntegrationOptions = {})
   yield* ctx.session.hook("context", (event) => serialized(event.sessionID, Effect.gen(function* () {
     const sessionID = event.sessionID;
     if (transport.owns(sessionID)) return;
+    yield* adoptFork(sessionID, false);
     const switchState = yield* state(sessionID);
     const parentID = yield* parent(sessionID);
     const child = parentID !== undefined && (yield* isEnabled(parentID));
@@ -459,6 +508,14 @@ export const integrate = (ctx: Plugin.Context, options: IntegrationOptions = {})
     }).pipe(Effect.orDie),
   });
   yield* ctx.event.subscribe().pipe(Stream.runForEach((event) => {
+    if (event.type === "session.forked") {
+      const sessionID = event.data.sessionID;
+      return serialized(sessionID, Effect.gen(function* () {
+        const session = yield* ctx.session.get({ sessionID });
+        if (session.location.directory !== ctx.location.directory || session.location.workspaceID !== ctx.location.workspaceID) return;
+        yield* adoptFork(sessionID, false);
+      })).pipe(Effect.catchCause((cause) => Effect.logWarning("UniiChat fork check failed", cause)));
+    }
     if (event.type !== "session.execution.succeeded" && event.type !== "session.execution.failed" && event.type !== "session.execution.interrupted") return Effect.void;
     const sessionID = event.data.sessionID;
     if (transport.owns(sessionID)) return Effect.void;

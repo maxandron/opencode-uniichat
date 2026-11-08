@@ -1,0 +1,14 @@
+# 0071: A fork takes over its source's memory
+
+An OpenCode fork (`Session.fork`, `before` a message or through the latest) copies the source's messages under new IDs, `msg_<fork event>_<seq>`, keeping each message's type, creation time and content; tool call IDs stay. UniiChat's state is keyed by session ID and did not follow: the fork's store was empty and the switch unset. With UniiChat off, the fork ran from UniiChat's native-compaction placeholder, so it lost most of the conversation. With `/unii on` it imported every earlier turn and summarized the whole session again (about 5,000 calls for a large chat).
+
+Now a fork whose source has UniiChat on takes over the source's memory before its first turn:
+
+- **When:** on the `session.forked` event, and lazily at the fork's first `context` hook, which catches forks made while the server was down. OpenCode has no hook before a fork, only these afterwards.
+- **Pairing:** each fork message is paired with the source message of the same type and creation time, in order. The full message lists are used when reachable, otherwise the contexts.
+- **Cut:** the fork keeps the records up to the last one whose message it holds; none when it holds none of them (a fork before the first recorded turn). Every kept record must come from a paired message (tool records by their call ID), or its source could never be matched again by undo or by the import of earlier turns. If one has no pair (the context began at a checkpoint), nothing is copied and the check runs again on the next turn.
+- **Copy:** under the source chat's lock, the kept records (each source renamed to the fork's message), the tree nodes below the cut, the cut views, the system prompt, the main attachments below the cut and the subagents whose reports are kept are written to a staging directory. `undone/` and `repaired/` stay behind. Summaries still running are not copied; the fork builds them.
+- **Publish:** the staged store replaces the fork's store in one rename, and the fork's chat is replaced in the process-wide registry at the same time: the entry is reserved first, so a status call during the takeover waits for the new chat instead of reopening the empty store. A store with records is never replaced. A failed copy leaves the fork as it was and is retried.
+- **Switch:** the fork is switched on. A fork the user already switched is left alone. `/unii on` in a fork with an empty store copies too, even when the source is off now.
+
+Subagent sessions stay children of the source; the logs of those reported before the fork point are copied, so `zoom` can still open them. A subagent still running at the fork point reports to the source only. The prompt cache does not carry over. A fork of a subagent session is not handled.
