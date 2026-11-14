@@ -24,7 +24,7 @@ const out = join(root, "dist/tui.js");
 // The modules OpenCode's TUI provides to plugins (`@opentui/solid/runtime-plugin-support/configure`
 // plus OpenCode's `additional` entry).
 const RUNTIME = new Set([
-  "@opentui/core", "@opentui/core/testing",
+  "@opentui/core",
   "@opentui/solid", "@opentui/solid/components", "@opentui/solid/jsx-runtime", "@opentui/solid/jsx-dev-runtime",
   "solid-js", "solid-js/store",
   "@opencode/plugin/tui",
