@@ -23,7 +23,7 @@ Memory is stored under `<OpenCode data dir>/uniichat/<sessionID>/`, normally `~/
 
 ## Install
 
-The current source needs OpenCode v2.2 or later. Tagged v0.2.1–v0.2.3 releases need v2.1; v0.2.0 and earlier need v2.0.
+The current source needs OpenCode v2.3 or later. Tagged v0.2.4–v0.2.12 releases need v2.2; v0.2.1–v0.2.3 need v2.1; v0.2.0 and earlier need v2.0.
 
 ```sh
 opencode plugin add github:maxandron/opencode-uniichat

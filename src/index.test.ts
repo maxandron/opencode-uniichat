@@ -480,3 +480,27 @@ test("a row our schema copy rejects still reaches the log as a wire row", () => 
   const newer = { type: "compaction", id: "msg_cp", status: "completed", reason: "auto", time: { created: DateTime.makeUnsafe(1000) }, future: { at: DateTime.makeUnsafe(2000) } };
   expect(toWire(newer as unknown as SessionMessage.Info)).toEqual({ type: "compaction", id: "msg_cp", status: "completed", reason: "auto", time: { created: 1000 }, future: { at: 2000 } } as unknown as Row);
 });
+
+test("the fork hook gives a fork of a UniiChat session its source's memory before its first turn", async () => {
+  const f = fixture([user("msg_a"), idle("msg_idle")]);
+  const forkID = Session.ID.make(`${f.sessionID}_fork`);
+  const elsewhere = Session.ID.make(`${f.sessionID}_elsewhere`);
+  const session = f.ctx.session as unknown as { get: (input: { sessionID: string }) => Effect.Effect<unknown> };
+  const base = session.get;
+  session.get = (input) => input.sessionID === forkID || input.sessionID === elsewhere
+    ? Effect.succeed({ location: { directory: input.sessionID === forkID ? process.cwd() : "/elsewhere" }, fork: { sessionID: f.sessionID } })
+    : base(input);
+  const replaced: string[] = [];
+  const chat = Effect.runSync(f.options.get!(f.sessionID, undefined as never)) as unknown as Record<string, unknown>;
+  Object.assign(chat, { size: () => 2, forkCopy: () => Effect.succeed({ keep: 2, unmatched: undefined }) });
+  const options: IntegrationOptions = { ...f.options, older: () => Effect.succeed([user("msg_a"), idle("msg_idle")]), replace: (sid) => Effect.sync(() => { replaced.push(sid); }) };
+  await Effect.runPromise(Effect.scoped(Effect.gen(function* () {
+    yield* integrate(f.ctx, options);
+    const fork = f.hooks.get("fork") as unknown as (event: { sessionID: string }) => Effect.Effect<void>;
+    yield* fork({ sessionID: elsewhere });
+    expect(replaced).toEqual([]);
+    yield* fork({ sessionID: forkID });
+    expect(replaced).toEqual([forkID]);
+    expect(f.storage.get(`session/${forkID}`)).toEqual({ on: true, render: true });
+  })));
+});

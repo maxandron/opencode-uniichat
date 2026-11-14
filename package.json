@@ -1,6 +1,6 @@
 {
   "name": "opencode-uniichat",
-  "version": "0.2.12",
+  "version": "0.2.13",
   "description": "UniiChat for OpenCode v2: a compacted, tree-structured memory in place of the growing transcript, after Victor Taelin's UniiChat recipe.",
   "license": "MIT",
   "type": "module",
@@ -33,14 +33,14 @@
     "test": "bun test src"
   },
   "dependencies": {
-    "@opencode/ai": "^2.2.6",
-    "@opencode/client": "^2.2.6",
-    "@opencode/schema": "^2.2.6",
-    "@opencode/util": "^2.2.6",
+    "@opencode/ai": "^2.3.0",
+    "@opencode/client": "^2.3.0",
+    "@opencode/schema": "^2.3.0",
+    "@opencode/util": "^2.3.0",
     "zod": "^4.0.0"
   },
   "peerDependencies": {
-    "@opencode/plugin": "^2.2.6",
+    "@opencode/plugin": "^2.3.0",
     "effect": "^4.1.0"
   },
   "peerDependenciesMeta": {
@@ -52,7 +52,7 @@
     }
   },
   "devDependencies": {
-    "@opencode/plugin": "2.2.6",
+    "@opencode/plugin": "2.3.0",
     "@opentui/core": "0.6.6",
     "@opentui/solid": "0.6.6",
     "@types/bun": "^1.4.0",

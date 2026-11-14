@@ -322,6 +322,14 @@ export const integrate = (ctx: Plugin.Context, options: IntegrationOptions = {})
     return { on };
   })).pipe(Effect.orDie);
 
+  // OpenCode runs the fork hook after copying the messages and before the fork request returns, so
+  // the fork has its memory before its first turn (ADR-0071).
+  yield* ctx.session.hook("fork", (event) => serialized(event.sessionID, Effect.gen(function* () {
+    const session = yield* ctx.session.get({ sessionID: event.sessionID });
+    if (session.location.directory !== ctx.location.directory || session.location.workspaceID !== ctx.location.workspaceID) return;
+    yield* adoptFork(event.sessionID, false);
+  })).pipe(Effect.catchCause((cause) => Effect.logWarning("UniiChat fork check failed", cause))));
+
   yield* ctx.session.hook("context", (event) => serialized(event.sessionID, Effect.gen(function* () {
     const sessionID = event.sessionID;
     if (transport.owns(sessionID)) return;
@@ -508,14 +516,6 @@ export const integrate = (ctx: Plugin.Context, options: IntegrationOptions = {})
     }).pipe(Effect.orDie),
   });
   yield* ctx.event.subscribe().pipe(Stream.runForEach((event) => {
-    if (event.type === "session.forked") {
-      const sessionID = event.data.sessionID;
-      return serialized(sessionID, Effect.gen(function* () {
-        const session = yield* ctx.session.get({ sessionID });
-        if (session.location.directory !== ctx.location.directory || session.location.workspaceID !== ctx.location.workspaceID) return;
-        yield* adoptFork(sessionID, false);
-      })).pipe(Effect.catchCause((cause) => Effect.logWarning("UniiChat fork check failed", cause)));
-    }
     if (event.type !== "session.execution.succeeded" && event.type !== "session.execution.failed" && event.type !== "session.execution.interrupted") return Effect.void;
     const sessionID = event.data.sessionID;
     if (transport.owns(sessionID)) return Effect.void;
